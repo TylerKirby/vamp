@@ -10,7 +10,7 @@
 
 set -e
 
-VAMP_VERSION="0.2.0"
+VAMP_VERSION="0.3.0"
 
 # Configuration - customize via ~/.config/vamp/config or env vars
 FILE_VIEWER="${VAMP_FILE_VIEWER:-yazi}"
@@ -238,64 +238,151 @@ setup_beads() {
 create_claude_monitor() {
     cat << 'MONITOR_SCRIPT'
 #!/bin/bash
-# Claude Code usage monitor
+# Claude Code usage monitor - mirrors /usage data
 
 CLAUDE_DIR="$HOME/.claude"
+STATS_FILE="$CLAUDE_DIR/stats-cache.json"
+
+# Colors
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# Format large numbers (1234567 -> 1.23M)
+format_tokens() {
+    local n=$1
+    if [ -z "$n" ] || [ "$n" = "null" ]; then
+        echo "0"
+    elif [ "$n" -ge 1000000 ] 2>/dev/null; then
+        awk "BEGIN {printf \"%.1fM\", $n/1000000}"
+    elif [ "$n" -ge 1000 ] 2>/dev/null; then
+        awk "BEGIN {printf \"%.1fK\", $n/1000}"
+    else
+        echo "$n"
+    fi
+}
+
+# Draw hourly activity sparkline
+draw_sparkline() {
+    local hours="$1"
+    local chars=(" " "▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
+    local max=$(echo "$hours" | jq -r 'to_entries | map(.value) | max // 1')
+
+    for h in $(seq 0 23); do
+        local count=$(echo "$hours" | jq -r ".[\"$h\"] // 0")
+        local idx=0
+        if [ "$max" -gt 0 ] && [ "$count" -gt 0 ]; then
+            idx=$(awk "BEGIN {printf \"%d\", ($count * 8 / $max)}")
+            [ $idx -gt 8 ] && idx=8
+        fi
+        printf "${chars[$idx]}"
+    done
+}
 
 while true; do
     clear
-    echo -e "\033[0;36m═══ Claude Code Monitor ═══\033[0m"
+    echo -e "${CYAN}═══ Claude Usage ═══${NC}"
     echo ""
-    
-    # Session info
-    if [ -d "$CLAUDE_DIR/projects" ]; then
-        ACTIVE_SESSIONS=$(find "$CLAUDE_DIR/projects" -name "*.json" -mmin -60 2>/dev/null | wc -l | tr -d ' ')
-        echo -e "\033[1;33mRecent Sessions:\033[0m $ACTIVE_SESSIONS (last hour)"
-    fi
-    
-    # Try to get current session stats from Claude's internal files
-    LATEST_SESSION=$(find "$CLAUDE_DIR/projects" -name "*.json" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
-    
-    if [ -n "$LATEST_SESSION" ] && [ -f "$LATEST_SESSION" ]; then
-        echo -e "\033[1;33mLatest Session:\033[0m"
-        # Extract basic stats if possible
-        if command -v jq &> /dev/null; then
-            MESSAGES=$(jq -r '.messages | length // 0' "$LATEST_SESSION" 2>/dev/null || echo "?")
-            echo "  Messages: $MESSAGES"
-        fi
-        echo "  File: $(basename "$LATEST_SESSION")"
-        echo "  Modified: $(stat -f '%Sm' -t '%H:%M:%S' "$LATEST_SESSION" 2>/dev/null || stat -c '%y' "$LATEST_SESSION" 2>/dev/null | cut -d'.' -f1)"
-    fi
-    
-    echo ""
-    echo -e "\033[1;33mClaude Commands:\033[0m"
-    echo "  /cost        - Show token usage"
-    echo "  /compact     - Compress context"
-    echo "  /clear       - Clear conversation"
-    echo "  /model       - Switch model"
-    
-    echo ""
-    echo -e "\033[1;33mBeads Status:\033[0m"
-    if command -v bd &> /dev/null && [ -d ".beads" -o -f ".beads.jsonl" ]; then
-        READY=$(bd ready --json 2>/dev/null | jq -r 'length' 2>/dev/null || bd ready 2>/dev/null | wc -l | tr -d ' ')
-        IN_PROGRESS=$(bd list --status in_progress --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
-        BLOCKED=$(bd list --status blocked --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
-        echo "  📋 Ready: $READY"
-        echo "  🔄 In Progress: $IN_PROGRESS"
-        echo "  🚫 Blocked: $BLOCKED"
+
+    # Check if stats file exists
+    if [ ! -f "$STATS_FILE" ]; then
+        echo -e "${DIM}No usage stats yet.${NC}"
+        echo "Use Claude Code to generate stats."
         echo ""
-        echo -e "\033[1;33mBeads Commands:\033[0m"
-        echo "  bd ready       - Show available work"
-        echo "  bd prime       - Refresh context"
-        echo "  bd compact     - Memory decay"
-        echo "  bd sync        - Sync with git"
+        echo -e "${DIM}30s refresh | Ctrl-C exit${NC}"
+        sleep 30
+        continue
+    fi
+
+    # Check jq availability
+    if ! command -v jq &> /dev/null; then
+        echo -e "${YELLOW}jq required${NC}"
+        echo "Install: brew install jq"
+        sleep 30
+        continue
+    fi
+
+    # Parse stats
+    STATS=$(cat "$STATS_FILE")
+    TODAY=$(date +%Y-%m-%d)
+
+    # ========== TODAY'S STATS ==========
+    echo -e "${YELLOW}TODAY${NC} ${DIM}($TODAY)${NC}"
+
+    TODAY_DATA=$(echo "$STATS" | jq -r --arg d "$TODAY" '.dailyActivity[] | select(.date == $d)' 2>/dev/null)
+    if [ -n "$TODAY_DATA" ]; then
+        MSGS=$(echo "$TODAY_DATA" | jq -r '.messageCount // 0')
+        SESSIONS=$(echo "$TODAY_DATA" | jq -r '.sessionCount // 0')
+        TOOLS=$(echo "$TODAY_DATA" | jq -r '.toolCallCount // 0')
+        printf "  Messages: %s  Sessions: %s\n" "$MSGS" "$SESSIONS"
+        printf "  Tool Calls: %s\n" "$TOOLS"
     else
-        echo "  Not initialized (run: bd init)"
+        echo -e "  ${DIM}No activity today${NC}"
     fi
 
     echo ""
-    echo -e "\033[2mRefreshes every 30s | Ctrl-C to exit\033[0m"
-    
+
+    # ========== TOKEN USAGE BY MODEL ==========
+    echo -e "${YELLOW}TOKENS${NC} ${DIM}(All Time)${NC}"
+
+    # Get all model names
+    MODELS=$(echo "$STATS" | jq -r '.modelUsage | keys[]' 2>/dev/null)
+
+    for model in $MODELS; do
+        # Extract short name (Opus 4.5 or Sonnet 4.5)
+        SHORT_NAME=$(echo "$model" | sed 's/claude-//' | sed 's/-[0-9]*$//' | sed 's/-/ /g' | awk '{print toupper(substr($1,1,1)) substr($1,2) " " $2 "." $3}')
+
+        IN=$(echo "$STATS" | jq -r ".modelUsage[\"$model\"].inputTokens // 0")
+        OUT=$(echo "$STATS" | jq -r ".modelUsage[\"$model\"].outputTokens // 0")
+        CACHE_R=$(echo "$STATS" | jq -r ".modelUsage[\"$model\"].cacheReadInputTokens // 0")
+        CACHE_W=$(echo "$STATS" | jq -r ".modelUsage[\"$model\"].cacheCreationInputTokens // 0")
+
+        echo -e "  ${GREEN}$SHORT_NAME${NC}"
+        printf "    In: %s  Out: %s\n" "$(format_tokens $IN)" "$(format_tokens $OUT)"
+        printf "    Cache: %s read, %s write\n" "$(format_tokens $CACHE_R)" "$(format_tokens $CACHE_W)"
+    done
+
+    echo ""
+
+    # ========== LIFETIME STATS ==========
+    echo -e "${YELLOW}LIFETIME${NC}"
+    TOTAL_SESSIONS=$(echo "$STATS" | jq -r '.totalSessions // 0')
+    TOTAL_MSGS=$(echo "$STATS" | jq -r '.totalMessages // 0')
+    printf "  Sessions: %s  Messages: %s\n" "$TOTAL_SESSIONS" "$(format_tokens $TOTAL_MSGS)"
+
+    echo ""
+
+    # ========== ACTIVITY SPARKLINE ==========
+    echo -e "${YELLOW}ACTIVITY${NC} ${DIM}(by hour)${NC}"
+    HOURS=$(echo "$STATS" | jq -r '.hourCounts // {}')
+    if [ "$HOURS" != "{}" ] && [ "$HOURS" != "null" ]; then
+        printf "  "
+        draw_sparkline "$HOURS"
+        echo ""
+        echo -e "  ${DIM}^0    ^6   ^12   ^18  ^23${NC}"
+    else
+        echo -e "  ${DIM}No hourly data${NC}"
+    fi
+
+    echo ""
+
+    # ========== BEADS STATUS ==========
+    echo -e "${YELLOW}BEADS${NC}"
+    if command -v bd &> /dev/null && [ -d ".beads" -o -f ".beads.jsonl" ]; then
+        READY=$(bd ready --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
+        IN_PROG=$(bd list --status in_progress --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
+        BLOCKED=$(bd list --status blocked --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
+        printf "  Ready: %s  In Progress: %s  Blocked: %s\n" "$READY" "$IN_PROG" "$BLOCKED"
+    else
+        echo -e "  ${DIM}Not initialized${NC}"
+    fi
+
+    echo ""
+    echo -e "${DIM}─────────────────────────────${NC}"
+    echo -e "${DIM}30s refresh | Ctrl-C exit${NC}"
+
     sleep 30
 done
 MONITOR_SCRIPT

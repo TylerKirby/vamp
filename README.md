@@ -10,7 +10,7 @@ Terminal-native development environment for Claude Code with beads integration f
 - **Mouse support** for scrolling, pane selection, and resizing
 - **File browser** (yazi) for project navigation
 - **System monitor** for resource tracking
-- **Claude monitor** window showing usage and beads status
+- **Claude monitor** window with token usage, activity stats, and beads status
 - **Beads integration** for persistent task/context management
 - **Git window** with lazygit
 - **Session persistence** - detach and reattach anytime

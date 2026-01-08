@@ -134,9 +134,15 @@ eod                    # End-of-day checkpoint prompt
 
 ### Monitor Window
 
-The Claude monitor window (Ctrl-b + 2) displays:
-- Ready, in-progress, and blocked task counts
-- Beads and Claude commands reference
+The Claude monitor window (Ctrl-b + 2) displays usage data from `~/.claude/stats-cache.json`:
+
+- **Today's activity** - Messages, sessions, tool calls
+- **Token usage by model** - Input, output, cache read/write for each model
+- **Lifetime stats** - Total sessions and messages
+- **Activity sparkline** - 24-hour usage pattern visualization
+- **Beads status** - Ready, in-progress, and blocked task counts
+
+Requires `jq` for JSON parsing. Refreshes every 30 seconds.
 
 ## Tmux Session Settings
 
