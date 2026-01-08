@@ -1,0 +1,415 @@
+#!/bin/bash
+
+# vamp: Terminal-native Claude Code development environment
+# Like a jazz vamp - keeps the rhythm while you improvise with Claude
+#
+# Usage: vamp [project-dir]
+#        vamp status
+#        vamp kill [session-name]
+#        vamp list
+
+set -e
+
+VAMP_VERSION="0.1.0"
+
+# Configuration - customize via ~/.config/vamp/config or env vars
+FILE_VIEWER="${VAMP_FILE_VIEWER:-yazi}"
+MONITOR_CMD="${VAMP_MONITOR:-htop}"
+CLAUDE_CMD="${VAMP_CLAUDE_CMD:-claude}"
+PROJECTS_DIR="${VAMP_PROJECTS_DIR:-$HOME/Projects}"
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+DIM='\033[2m'
+NC='\033[0m'
+
+# Load config if exists
+[ -f "$HOME/.config/vamp/config" ] && source "$HOME/.config/vamp/config"
+
+# ============================================
+# Subcommands
+# ============================================
+
+show_help() {
+    cat << EOF
+${CYAN}vamp${NC} v${VAMP_VERSION} - Terminal-native Claude Code environment
+
+${YELLOW}USAGE:${NC}
+    vamp [project-dir]     Start dev environment (default: current dir)
+    vamp list              List active vamp sessions
+    vamp attach <name>     Attach to existing session
+    vamp kill <name>       Kill a session
+    vamp killall           Kill all vamp sessions
+    vamp init              Initialize project with beads + CLAUDE.md
+    vamp help              Show this help
+
+${YELLOW}EXAMPLES:${NC}
+    vamp                   Start in current directory
+    vamp ~/Projects/app    Start in specific directory
+    vamp attach app        Attach to 'vamp-app' session
+    vamp list              Show all running sessions
+
+${YELLOW}KEYBINDINGS:${NC}
+    Ctrl-b + arrows        Navigate panes
+    Ctrl-b + z             Zoom pane (toggle fullscreen)
+    Ctrl-b + d             Detach (session keeps running)
+    Ctrl-b + 0             Main window
+    Ctrl-b + 1             Git window
+    Ctrl-b + 2             Claude monitor window
+
+${YELLOW}MOUSE:${NC}
+    Scroll wheel           Scroll pane content
+    Click pane             Select pane
+    Drag border            Resize pane
+
+${YELLOW}CONFIG:${NC}
+    ~/.config/vamp/config
+
+EOF
+}
+
+list_sessions() {
+    echo -e "${CYAN}Active vamp sessions:${NC}"
+    local sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^vamp-" || true)
+    if [ -z "$sessions" ]; then
+        echo -e "${DIM}  No active sessions${NC}"
+    else
+        echo "$sessions" | while read -r session; do
+            local project="${session#vamp-}"
+            local windows=$(tmux list-windows -t "$session" -F '#{window_name}' 2>/dev/null | tr '\n' ' ')
+            echo -e "  ${GREEN}●${NC} $project ${DIM}[$windows]${NC}"
+        done
+    fi
+}
+
+attach_session() {
+    local name="$1"
+    if [ -z "$name" ]; then
+        echo -e "${RED}Usage: vamp attach <session-name>${NC}"
+        list_sessions
+        return 1
+    fi
+    
+    local session="vamp-$name"
+    if tmux has-session -t "$session" 2>/dev/null; then
+        tmux attach-session -t "$session"
+    else
+        echo -e "${RED}Session '$session' not found${NC}"
+        list_sessions
+        return 1
+    fi
+}
+
+kill_session() {
+    local name="$1"
+    if [ -z "$name" ]; then
+        echo -e "${RED}Usage: vamp kill <session-name>${NC}"
+        list_sessions
+        return 1
+    fi
+    
+    local session="vamp-$name"
+    if tmux kill-session -t "$session" 2>/dev/null; then
+        echo -e "${GREEN}Killed session: $session${NC}"
+    else
+        echo -e "${RED}Session '$session' not found${NC}"
+    fi
+}
+
+kill_all_sessions() {
+    local sessions=$(tmux list-sessions -F '#{session_name}' 2>/dev/null | grep "^vamp-" || true)
+    if [ -z "$sessions" ]; then
+        echo -e "${DIM}No vamp sessions to kill${NC}"
+        return 0
+    fi
+    
+    echo -e "${YELLOW}This will kill:${NC}"
+    echo "$sessions" | sed 's/^/  /'
+    read -p "Continue? [y/N] " confirm
+    if [[ "$confirm" =~ ^[Yy]$ ]]; then
+        echo "$sessions" | xargs -I {} tmux kill-session -t {}
+        echo -e "${GREEN}All vamp sessions killed${NC}"
+    fi
+}
+
+init_project() {
+    local name=$(basename "$(pwd)")
+    echo -e "${CYAN}Initializing project: $name${NC}"
+    
+    # Git
+    if [ ! -d ".git" ]; then
+        git init
+        echo -e "  ${GREEN}✓${NC} Initialized git"
+    fi
+    
+    # Beads
+    if command -v bd &> /dev/null; then
+        if [ ! -d ".beads" ] && [ ! -f ".beads.jsonl" ]; then
+            bd init
+            echo -e "  ${GREEN}✓${NC} Initialized beads"
+        else
+            echo -e "  ${DIM}○${NC} Beads already initialized"
+        fi
+    else
+        echo -e "  ${YELLOW}○${NC} Beads not installed (brew tap steveyegge/beads && brew install beads)"
+    fi
+    
+    # CLAUDE.md
+    if [ ! -f "CLAUDE.md" ]; then
+        cat > CLAUDE.md << EOF
+# $name
+
+## Project Overview
+<!-- Brief description -->
+
+## Tech Stack
+<!-- Languages, frameworks, dependencies -->
+
+## Development
+- Task tracking: \`bd ready\` for available work
+- Tests: \`<test command>\`
+
+## Architecture
+<!-- Key patterns and decisions -->
+
+## Current Focus
+<!-- Active work items -->
+EOF
+        echo -e "  ${GREEN}✓${NC} Created CLAUDE.md"
+    else
+        echo -e "  ${DIM}○${NC} CLAUDE.md exists"
+    fi
+    
+    # .gitignore
+    if ! grep -q ".beads-cache" .gitignore 2>/dev/null; then
+        echo -e "\n# Beads cache\n.beads-cache/" >> .gitignore
+        echo -e "  ${GREEN}✓${NC} Updated .gitignore"
+    fi
+    
+    echo -e "\n${GREEN}Ready! Run 'vamp' to start${NC}"
+}
+
+# ============================================
+# Claude monitor script (runs in pane)
+# ============================================
+
+create_claude_monitor() {
+    cat << 'MONITOR_SCRIPT'
+#!/bin/bash
+# Claude Code usage monitor
+
+CLAUDE_DIR="$HOME/.claude"
+
+while true; do
+    clear
+    echo -e "\033[0;36m═══ Claude Code Monitor ═══\033[0m"
+    echo ""
+    
+    # Session info
+    if [ -d "$CLAUDE_DIR/projects" ]; then
+        ACTIVE_SESSIONS=$(find "$CLAUDE_DIR/projects" -name "*.json" -mmin -60 2>/dev/null | wc -l | tr -d ' ')
+        echo -e "\033[1;33mRecent Sessions:\033[0m $ACTIVE_SESSIONS (last hour)"
+    fi
+    
+    # Try to get current session stats from Claude's internal files
+    LATEST_SESSION=$(find "$CLAUDE_DIR/projects" -name "*.json" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
+    
+    if [ -n "$LATEST_SESSION" ] && [ -f "$LATEST_SESSION" ]; then
+        echo -e "\033[1;33mLatest Session:\033[0m"
+        # Extract basic stats if possible
+        if command -v jq &> /dev/null; then
+            MESSAGES=$(jq -r '.messages | length // 0' "$LATEST_SESSION" 2>/dev/null || echo "?")
+            echo "  Messages: $MESSAGES"
+        fi
+        echo "  File: $(basename "$LATEST_SESSION")"
+        echo "  Modified: $(stat -f '%Sm' -t '%H:%M:%S' "$LATEST_SESSION" 2>/dev/null || stat -c '%y' "$LATEST_SESSION" 2>/dev/null | cut -d'.' -f1)"
+    fi
+    
+    echo ""
+    echo -e "\033[1;33mClaude Commands:\033[0m"
+    echo "  /cost        - Show token usage"
+    echo "  /compact     - Compress context"
+    echo "  /clear       - Clear conversation"
+    echo "  /model       - Switch model"
+    
+    echo ""
+    echo -e "\033[1;33mBeads Status:\033[0m"
+    if command -v bd &> /dev/null && [ -d ".beads" -o -f ".beads.jsonl" ]; then
+        READY=$(bd ready --json 2>/dev/null | jq -r 'length' 2>/dev/null || bd ready 2>/dev/null | wc -l | tr -d ' ')
+        BLOCKED=$(bd list --status blocked --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
+        echo "  Ready tasks: $READY"
+        echo "  Blocked: $BLOCKED"
+    else
+        echo "  Not initialized (run: bd init)"
+    fi
+    
+    echo ""
+    echo -e "\033[2mRefreshes every 30s | Ctrl-C to exit\033[0m"
+    
+    sleep 30
+done
+MONITOR_SCRIPT
+}
+
+# ============================================
+# Main session launcher
+# ============================================
+
+start_session() {
+    local PROJECT_DIR="${1:-$(pwd)}"
+    PROJECT_DIR=$(cd "$PROJECT_DIR" 2>/dev/null && pwd) || {
+        echo -e "${RED}Directory not found: $1${NC}"
+        exit 1
+    }
+    
+    local PROJECT_NAME=$(basename "$PROJECT_DIR")
+    local SESSION_NAME="vamp-$(echo "$PROJECT_NAME" | tr '.:' '-')"
+    
+    echo -e "${CYAN}♪ vamp${NC} ${DIM}v${VAMP_VERSION}${NC}"
+    echo -e "${GREEN}Project:${NC} $PROJECT_NAME"
+    echo -e "${GREEN}Path:${NC} $PROJECT_DIR"
+    
+    # Check if session exists
+    if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
+        echo -e "${YELLOW}Session exists. Attaching...${NC}"
+        tmux attach-session -t "$SESSION_NAME"
+        return 0
+    fi
+    
+    # Validate tools
+    if ! command -v tmux &> /dev/null; then
+        echo -e "${RED}tmux not found. Install with: brew install tmux${NC}"
+        exit 1
+    fi
+    
+    # Fallbacks for optional tools
+    command -v "$FILE_VIEWER" &> /dev/null || FILE_VIEWER="ls -la && echo 'Install yazi: brew install yazi'"
+    command -v "$MONITOR_CMD" &> /dev/null || MONITOR_CMD="top"
+    
+    # Check beads status
+    local BEADS_INIT=""
+    [ -d "$PROJECT_DIR/.beads" ] || [ -f "$PROJECT_DIR/.beads.jsonl" ] && BEADS_INIT="yes"
+    
+    # Create monitor script
+    local MONITOR_SCRIPT="/tmp/vamp-claude-monitor-$$.sh"
+    create_claude_monitor > "$MONITOR_SCRIPT"
+    chmod +x "$MONITOR_SCRIPT"
+    
+    # ============================================
+    # Create tmux session
+    # ============================================
+    # Layout:
+    # +-------------------+--------+
+    # |                   |        |
+    # |   Claude Code     | Files  |
+    # |                   |        |
+    # +-------------------+--------+
+    # |  Shell/Beads      | Monitor|
+    # +-------------------+--------+
+    
+    tmux new-session -d -s "$SESSION_NAME" -c "$PROJECT_DIR" -x "$(tput cols)" -y "$(tput lines)"
+    tmux rename-window -t "$SESSION_NAME:0" "main"
+
+    # Enable mouse support (scoped to this session only)
+    tmux set-option -t "$SESSION_NAME" mouse on
+    tmux set-option -t "$SESSION_NAME" focus-events on
+
+    # Status bar with vamp version
+    tmux set-option -t "$SESSION_NAME" status-right "vamp v${VAMP_VERSION} | %H:%M"
+    tmux set-option -t "$SESSION_NAME" status-style "bg=colour236,fg=colour248"
+
+    # Split: left 70% | right 30%
+    tmux split-window -t "$SESSION_NAME:0" -h -p 30 -c "$PROJECT_DIR"
+    
+    # Split right pane: top files | bottom monitor
+    tmux split-window -t "$SESSION_NAME:0.1" -v -p 40 -c "$PROJECT_DIR"
+    
+    # Split left pane: top claude | bottom shell
+    tmux select-pane -t "$SESSION_NAME:0.0"
+    tmux split-window -t "$SESSION_NAME:0.0" -v -p 25 -c "$PROJECT_DIR"
+    
+    # Pane 0: Claude Code
+    tmux send-keys -t "$SESSION_NAME:0.0" "cd '$PROJECT_DIR' && clear && echo '🎹 Claude Code' && $CLAUDE_CMD" Enter
+    
+    # Pane 1: Shell with beads
+    tmux send-keys -t "$SESSION_NAME:0.1" "cd '$PROJECT_DIR' && clear" Enter
+    if [ -n "$BEADS_INIT" ]; then
+        tmux send-keys -t "$SESSION_NAME:0.1" "echo '📿 Beads' && bd ready" Enter
+    else
+        tmux send-keys -t "$SESSION_NAME:0.1" "echo '💻 Shell (bd init for beads)'" Enter
+    fi
+    
+    # Pane 2: File viewer
+    tmux send-keys -t "$SESSION_NAME:0.2" "cd '$PROJECT_DIR' && $FILE_VIEWER" Enter
+    
+    # Pane 3: System monitor
+    tmux send-keys -t "$SESSION_NAME:0.3" "$MONITOR_CMD" Enter
+    
+    # Focus Claude pane
+    tmux select-pane -t "$SESSION_NAME:0.0"
+    
+    # Window 1: Git
+    tmux new-window -t "$SESSION_NAME" -n "git" -c "$PROJECT_DIR"
+    if command -v lazygit &> /dev/null; then
+        tmux send-keys -t "$SESSION_NAME:git" "lazygit" Enter
+    else
+        tmux send-keys -t "$SESSION_NAME:git" "git status" Enter
+    fi
+    
+    # Window 2: Claude monitor
+    tmux new-window -t "$SESSION_NAME" -n "monitor" -c "$PROJECT_DIR"
+    tmux send-keys -t "$SESSION_NAME:monitor" "cd '$PROJECT_DIR' && $MONITOR_SCRIPT" Enter
+    
+    # Back to main
+    tmux select-window -t "$SESSION_NAME:0"
+    
+    echo ""
+    echo -e "${CYAN}Keybindings:${NC}"
+    echo "  Ctrl-b + arrows  Navigate panes"
+    echo "  Ctrl-b + z       Zoom pane"
+    echo "  Ctrl-b + d       Detach"
+    echo "  Ctrl-b + 0/1/2   Switch windows"
+    echo ""
+    echo -e "${CYAN}Mouse:${NC}"
+    echo "  Scroll           Scroll content"
+    echo "  Click            Select pane"
+    echo "  Drag border      Resize pane"
+    echo ""
+
+    tmux attach-session -t "$SESSION_NAME"
+}
+
+# ============================================
+# Main entry point
+# ============================================
+
+case "${1:-}" in
+    help|--help|-h)
+        show_help
+        ;;
+    list|ls)
+        list_sessions
+        ;;
+    attach|a)
+        attach_session "$2"
+        ;;
+    kill|k)
+        kill_session "$2"
+        ;;
+    killall)
+        kill_all_sessions
+        ;;
+    init)
+        init_project
+        ;;
+    version|--version|-v)
+        echo "vamp v${VAMP_VERSION}"
+        ;;
+    *)
+        start_session "$1"
+        ;;
+esac
