@@ -117,10 +117,15 @@ After install, these shortcuts are available:
 |---------|--------|
 | `bds` | Show ready tasks |
 | `bdl` | List all tasks |
+| `bdip` | In-progress tasks |
+| `bdb` | Blocked tasks |
 | `bdn <title>` | Create new task |
 | `bdp <title>` | Create P0 task |
 | `bdcp <id> <notes>` | Checkpoint task |
 | `bdd <id>` | Close task |
+| `bdpr` | Prime context for Claude |
+| `bdsy` | Sync beads with git |
+| `bdco` | Compact (memory decay) |
 
 ### Claude Code
 | Command | Action |
@@ -133,6 +138,8 @@ After install, these shortcuts are available:
 ### Workflow
 | Command | Action |
 |---------|--------|
+| `ss` | Session start (prime + status) |
+| `se` | Session end (sync + status) |
 | `standup` | Morning status check |
 | `eod` | End of day checkpoint |
 
@@ -156,44 +163,76 @@ export VAMP_PROJECTS_DIR="$HOME/Projects"
 
 ## Workflow
 
+### First-Time Setup
+
+```bash
+# Install beads hooks for Claude Code (run once globally)
+vamp setup
+
+# Restart Claude Code for hooks to take effect
+```
+
 ### Starting a Session
 
 ```bash
 cd ~/Projects/my-app
-vamp
+vamp                  # Launches tmux environment
+ss                    # Prime beads context, show ready tasks
+```
+
+The `ss` command (session start) runs `bd prime` which loads all your beads context into Claude's memory. Claude now knows about all your tasks, dependencies, and progress.
+
+### During Work
+
+```bash
+# Check what's available
+bds                   # Ready tasks (no blockers)
+bdip                  # In-progress tasks
+
+# Claim a task
+bd update <id> --status=in_progress
+
+# ... work with Claude Code ...
+
+# Checkpoint progress (before context compaction)
+bdcp <id> "Implemented auth, need tests"
+
+# Close completed work
+bdd <id>
+```
+
+**Claude Code Integration:**
+- Ask Claude "What should I work on?" - it checks `bd ready`
+- Tell Claude "I finished the auth flow" - it can run `bd close`
+- Hooks auto-run `bd prime` on session start and before compaction
+
+### End of Session
+
+```bash
+se                    # Sync beads with git, show status
+# Ctrl-b d to detach (session keeps running)
+```
+
+The `se` command (session end) runs `bd sync` to push your beads changes to the git remote.
+
+### Resuming Later
+
+```bash
+va my-app             # Reattach to tmux session
+ss                    # Prime context again
+# Claude instantly knows where you left off
 ```
 
 ### Morning Routine
 
 ```bash
-vamp attach my-app    # or just: va my-app
-standup               # see what's ready
-```
-
-### During Work
-
-```bash
-# In Claude Code, it knows about beads:
-# "What should I work on?" -> checks bd ready
-# "I finished the auth flow" -> can update beads
-
-# Checkpoint before context runs out:
-bdcp auth-123 "Implemented JWT refresh, need to add tests"
+standup               # Git status + ready tasks
 ```
 
 ### End of Day
 
 ```bash
-eod                   # checkpoint in-progress work
-# Ctrl-b d to detach
-```
-
-### Resume Later
-
-```bash
-va my-app
-# Claude: "What was I working on?"
-# It checks beads and knows the full context
+eod                   # Checkpoint prompt + status
 ```
 
 ## Project Structure

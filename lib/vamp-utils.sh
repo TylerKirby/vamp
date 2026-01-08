@@ -47,6 +47,12 @@ alias bds='bd ready'                    # Show ready tasks
 alias bdl='bd list'                     # List all
 alias bda='bd list --all'               # List including closed
 alias bdb='bd list --status blocked'    # Show blocked
+alias bdip='bd list --status in_progress'  # In progress
+
+# Context and sync
+alias bdpr='bd prime'                   # Prime context for Claude
+alias bdsy='bd sync'                    # Full sync
+alias bdco='bd compact --stats'         # Compact with stats
 
 # Create task
 bdn() {
@@ -133,26 +139,72 @@ standup() {
 eod() {
     echo "💾 End of day checkpoint"
     echo ""
-    
+
     # Show what's in progress
     echo "In progress tasks:"
-    bd list --status in-progress 2>/dev/null || echo "  None"
+    bd list --status in_progress 2>/dev/null || echo "  None"
     echo ""
-    
+
     read -p "Checkpoint notes (or Enter to skip): " notes
     if [ -n "$notes" ]; then
         # Get first in-progress task and update it
-        local task=$(bd list --status in-progress --json 2>/dev/null | jq -r '.[0].id' 2>/dev/null)
+        local task=$(bd list --status in_progress --json 2>/dev/null | jq -r '.[0].id' 2>/dev/null)
         if [ -n "$task" ] && [ "$task" != "null" ]; then
             bd update "$task" --notes "$notes"
             echo "Updated: $task"
         fi
     fi
-    
+
     echo ""
     echo "Git status:"
     git status -s
 }
+
+# Session start - prime context and show status
+session_start() {
+    echo "🎹 Starting dev session..."
+    echo ""
+
+    # Prime beads context if available
+    if command -v bd &> /dev/null && [ -d ".beads" -o -f ".beads.jsonl" ]; then
+        echo "📿 Priming beads context..."
+        bd prime
+        echo ""
+        echo "📋 Ready tasks:"
+        bd ready
+    fi
+
+    echo ""
+    echo "📝 Recent commits:"
+    git log --oneline -5 2>/dev/null || echo "  No git"
+    echo ""
+    echo "🔄 Git status:"
+    git status -s 2>/dev/null || echo "  No git"
+}
+
+# Session end - sync and show status
+session_end() {
+    echo "💾 Ending session..."
+    echo ""
+
+    if command -v bd &> /dev/null && [ -d ".beads" -o -f ".beads.jsonl" ]; then
+        # Show in-progress
+        echo "📋 In progress tasks:"
+        bd list --status in_progress 2>/dev/null || echo "  None"
+        echo ""
+
+        # Sync beads
+        echo "🔗 Syncing beads..."
+        bd sync 2>/dev/null || true
+    fi
+
+    echo ""
+    echo "Git status:"
+    git status -s
+}
+
+alias ss='session_start'
+alias se='session_end'
 
 # ============================================
 # Help
@@ -174,10 +226,14 @@ Launcher:
 Beads:
   bds            Ready tasks
   bdl            List all
+  bdip           In progress
   bdn <title>    New task
   bdp <title>    New P0 task
   bdcp <id> <n>  Checkpoint
   bdd <id>       Close task
+  bdpr           Prime context
+  bdsy           Sync with git
+  bdco           Compact (memory decay)
 
 Claude:
   ccr            Resume session
@@ -193,6 +249,8 @@ Tmux:
 Workflow:
   standup        Morning status
   eod            End of day checkpoint
+  ss             Session start (prime + status)
+  se             Session end (sync + status)
 EOF
 }
 

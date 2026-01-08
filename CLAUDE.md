@@ -56,6 +56,88 @@ User config lives at `~/.config/vamp/config`:
 - `VAMP_CLAUDE_CMD` - claude command
 - `VAMP_PROJECTS_DIR` - for project picker
 
+## Beads Integration
+
+Vamp integrates with [beads](https://github.com/steveyegge/beads) for AI-native task tracking that maintains context across Claude Code sessions.
+
+### Setup
+
+```bash
+# Global setup (installs Claude Code hooks)
+vamp setup
+
+# Per-project setup (during vamp init)
+vamp init              # Initializes git, beads, git hooks, CLAUDE.md
+```
+
+The `vamp setup` command installs:
+- **SessionStart hook** - runs `bd prime` when Claude Code starts
+- **PreCompact hook** - runs `bd prime` before context compaction
+- **Git hooks** - auto-sync beads with commits
+
+### Auto-Approval
+
+To avoid prompts for beads commands, add to `.claude/settings.local.json`:
+```json
+{
+  "permissions": {
+    "allow": ["Bash(bd:*)"]
+  }
+}
+```
+
+### Workflow
+
+**Session Start:**
+```bash
+ss                     # Primes beads context, shows ready tasks, git status
+# Or manually:
+bd prime               # Load beads context into Claude
+bd ready               # See available work
+```
+
+**During Session:**
+```bash
+bds                    # Show ready tasks
+bdip                   # Show in-progress tasks
+bdcp <id> <notes>      # Checkpoint progress
+bdn "Task title"       # Create new task
+bdd <id>               # Close task
+```
+
+**Session End:**
+```bash
+se                     # Syncs beads, shows status
+# Or manually:
+bd sync                # Sync beads with git
+eod                    # End-of-day checkpoint prompt
+```
+
+### Shell Aliases
+
+| Alias | Command | Description |
+|-------|---------|-------------|
+| `bds` | `bd ready` | Ready tasks |
+| `bdl` | `bd list` | All tasks |
+| `bda` | `bd list --all` | Including closed |
+| `bdip` | `bd list --status in_progress` | In progress |
+| `bdb` | `bd list --status blocked` | Blocked |
+| `bdn` | `bd create ... -t task` | New task |
+| `bdp` | `bd create ... --priority 0` | New P0 task |
+| `bdcp` | `bd update + bd show` | Checkpoint |
+| `bdd` | `bd close` | Close task |
+| `bdpr` | `bd prime` | Prime context |
+| `bdsy` | `bd sync` | Sync with git |
+| `bdco` | `bd compact --stats` | Compact (memory decay) |
+| `ss` | `session_start` | Start workflow |
+| `se` | `session_end` | End workflow |
+
+### Monitor Window
+
+The Claude monitor window (Ctrl-b + 2) displays:
+- Ready, in-progress, and blocked task counts
+- Beads and Claude commands reference
+
 ## Tmux Session Settings
 
 Vamp configures each tmux session with:
@@ -75,6 +157,15 @@ Yazi config at `~/.config/yazi/yazi.toml`:
 - `Enter` or `o` - Opens in bat (syntax-highlighted viewer)
 - `Shift+O` - Menu to choose between bat or Cursor
 - `q` in bat - Returns to yazi
+
+## Versioning
+
+Version is defined in `bin/vamp` as `VAMP_VERSION`. Follow semantic versioning:
+- **MAJOR** (x.0.0) - Breaking changes
+- **MINOR** (0.x.0) - New features, backward compatible
+- **PATCH** (0.0.x) - Bug fixes, backward compatible
+
+Increment the version when adding features or fixes. The version displays in the tmux status bar.
 
 ## Dependencies
 

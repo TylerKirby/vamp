@@ -10,7 +10,7 @@
 
 set -e
 
-VAMP_VERSION="0.1.0"
+VAMP_VERSION="0.2.0"
 
 # Configuration - customize via ~/.config/vamp/config or env vars
 FILE_VIEWER="${VAMP_FILE_VIEWER:-yazi}"
@@ -45,6 +45,7 @@ ${YELLOW}USAGE:${NC}
     vamp kill <name>       Kill a session
     vamp killall           Kill all vamp sessions
     vamp init              Initialize project with beads + CLAUDE.md
+    vamp setup             Install beads hooks for Claude Code + git
     vamp help              Show this help
 
 ${YELLOW}EXAMPLES:${NC}
@@ -154,6 +155,15 @@ init_project() {
         else
             echo -e "  ${DIM}○${NC} Beads already initialized"
         fi
+
+        # Install git hooks
+        bd hooks install 2>/dev/null && echo -e "  ${GREEN}✓${NC} Git hooks installed"
+
+        # Check Claude integration
+        if ! bd setup claude --check &>/dev/null; then
+            echo -e "  ${YELLOW}?${NC} Claude Code hooks not installed"
+            echo -e "      Run 'vamp setup' to install globally"
+        fi
     else
         echo -e "  ${YELLOW}○${NC} Beads not installed (brew tap steveyegge/beads && brew install beads)"
     fi
@@ -191,6 +201,34 @@ EOF
     fi
     
     echo -e "\n${GREEN}Ready! Run 'vamp' to start${NC}"
+}
+
+setup_beads() {
+    echo -e "${CYAN}Setting up beads integration...${NC}"
+
+    if ! command -v bd &> /dev/null; then
+        echo -e "  ${RED}✗${NC} beads not installed"
+        echo -e "    Install: brew tap steveyegge/beads && brew install beads"
+        return 1
+    fi
+
+    # Install Claude Code hooks
+    echo -e "${BLUE}Installing Claude Code hooks...${NC}"
+    bd setup claude
+    echo -e "  ${GREEN}✓${NC} Claude Code hooks installed"
+
+    # Install git hooks if in a git repo
+    if [ -d ".git" ]; then
+        echo -e "${BLUE}Installing git hooks...${NC}"
+        bd hooks install 2>/dev/null && echo -e "  ${GREEN}✓${NC} Git hooks installed"
+    else
+        echo -e "  ${DIM}○${NC} Not a git repo, skipping git hooks"
+    fi
+
+    echo ""
+    echo -e "${GREEN}Beads integration complete!${NC}"
+    echo -e "  Restart Claude Code for hooks to take effect."
+    echo -e "  Run 'bd setup claude --check' to verify."
 }
 
 # ============================================
@@ -240,13 +278,21 @@ while true; do
     echo -e "\033[1;33mBeads Status:\033[0m"
     if command -v bd &> /dev/null && [ -d ".beads" -o -f ".beads.jsonl" ]; then
         READY=$(bd ready --json 2>/dev/null | jq -r 'length' 2>/dev/null || bd ready 2>/dev/null | wc -l | tr -d ' ')
+        IN_PROGRESS=$(bd list --status in_progress --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
         BLOCKED=$(bd list --status blocked --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
-        echo "  Ready tasks: $READY"
-        echo "  Blocked: $BLOCKED"
+        echo "  📋 Ready: $READY"
+        echo "  🔄 In Progress: $IN_PROGRESS"
+        echo "  🚫 Blocked: $BLOCKED"
+        echo ""
+        echo -e "\033[1;33mBeads Commands:\033[0m"
+        echo "  bd ready       - Show available work"
+        echo "  bd prime       - Refresh context"
+        echo "  bd compact     - Memory decay"
+        echo "  bd sync        - Sync with git"
     else
         echo "  Not initialized (run: bd init)"
     fi
-    
+
     echo ""
     echo -e "\033[2mRefreshes every 30s | Ctrl-C to exit\033[0m"
     
@@ -405,6 +451,9 @@ case "${1:-}" in
         ;;
     init)
         init_project
+        ;;
+    setup)
+        setup_beads
         ;;
     version|--version|-v)
         echo "vamp v${VAMP_VERSION}"
