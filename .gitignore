@@ -4,6 +4,9 @@
 # Claude Code session data
 .claude/
 
+# Beads issue tracking (local)
+.beads/
+
 # Editor/IDE
 *.swp
 *.swo

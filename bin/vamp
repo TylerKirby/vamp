@@ -478,34 +478,36 @@ start_session() {
     
     # Pane 2: File viewer
     tmux send-keys -t "$SESSION_NAME:0.2" "cd '$PROJECT_DIR' && $FILE_VIEWER" Enter
-    
-    # Pane 3: System monitor
+
+    # Split pane 3 (monitor area) into htop + claude usage
+    tmux split-window -t "$SESSION_NAME:0.3" -v -p 50 -c "$PROJECT_DIR"
+
+    # Pane 3: System monitor (htop)
     tmux send-keys -t "$SESSION_NAME:0.3" "$MONITOR_CMD" Enter
-    
+
+    # Pane 4: Claude usage checker
+    tmux send-keys -t "$SESSION_NAME:0.4" "cd '$PROJECT_DIR' && clear && echo '📊 Claude Usage (run /usage to check limits)' && $CLAUDE_CMD" Enter
+
     # Focus Claude pane
     tmux select-pane -t "$SESSION_NAME:0.0"
-    
-    # Window 1: Git
-    tmux new-window -t "$SESSION_NAME" -n "git" -c "$PROJECT_DIR"
+
+    # Window 1: Beads/Git
+    tmux new-window -t "$SESSION_NAME" -n "beads" -c "$PROJECT_DIR"
     if command -v lazygit &> /dev/null; then
-        tmux send-keys -t "$SESSION_NAME:git" "lazygit" Enter
+        tmux send-keys -t "$SESSION_NAME:beads" "lazygit" Enter
     else
-        tmux send-keys -t "$SESSION_NAME:git" "git status" Enter
+        tmux send-keys -t "$SESSION_NAME:beads" "git status" Enter
     fi
-    
-    # Window 2: Claude monitor
-    tmux new-window -t "$SESSION_NAME" -n "monitor" -c "$PROJECT_DIR"
-    tmux send-keys -t "$SESSION_NAME:monitor" "cd '$PROJECT_DIR' && $MONITOR_SCRIPT" Enter
-    
+
     # Back to main
     tmux select-window -t "$SESSION_NAME:0"
-    
+
     echo ""
     echo -e "${CYAN}Keybindings:${NC}"
     echo "  Ctrl-b + arrows  Navigate panes"
     echo "  Ctrl-b + z       Zoom pane"
     echo "  Ctrl-b + d       Detach"
-    echo "  Ctrl-b + 0/1/2   Switch windows"
+    echo "  Ctrl-b + 0/1     Switch windows"
     echo ""
     echo -e "${CYAN}Mouse:${NC}"
     echo "  Scroll           Scroll content"

@@ -2,6 +2,8 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+> **Note:** When adding or changing features, always update both this file and README.md to keep documentation in sync.
+
 ## Project Overview
 
 Vamp is a terminal-native development environment for Claude Code. It creates a tmux-based workspace with integrated file browsing (yazi), system monitoring (htop), git interface (lazygit), and optional beads task tracking.
@@ -32,9 +34,21 @@ No build or test commands - this is a bash-only project.
 
 **bin/vamp** - Main entry point. A single bash script (~400 lines) that:
 - Parses subcommands (list, attach, kill, init, help)
-- Creates tmux sessions with a 4-pane layout: Claude Code (main), shell, file viewer, system monitor
-- Adds two additional tmux windows: git (lazygit) and Claude monitor
-- Generates a monitor script on-the-fly that displays Claude session stats and beads status
+- Creates tmux sessions with a 5-pane layout: Claude Code, shell, file viewer, htop, usage checker
+- The shell pane runs `bd ready` on startup if beads is detected, then is available for any commands
+- Adds one additional tmux window: beads (lazygit)
+- Includes a usage checker pane (Claude instance) for running `/usage` to check session limits
+
+**Tmux Windows:**
+- Window 0 "main": 5-pane layout with Claude Code, shell, yazi, htop, and usage checker
+- Window 1 "beads": lazygit for git operations
+
+**Main Window Panes:**
+- Pane 0: Claude Code (top left, 75%) - main work area
+- Pane 1: Shell (bottom left, 25%) - runs `bd ready` on startup if beads detected
+- Pane 2: File viewer/yazi (top right)
+- Pane 3: htop (middle right)
+- Pane 4: Usage checker (bottom right) - Claude instance for running `/usage` to check session limits
 
 **lib/vamp-utils.sh** - Shell aliases and functions sourced in user's shell:
 - Launcher shortcuts: `v`, `vp`, `va`, `vk`, `vl`, `vi`
@@ -132,17 +146,15 @@ eod                    # End-of-day checkpoint prompt
 | `ss` | `session_start` | Start workflow |
 | `se` | `session_end` | End workflow |
 
-### Monitor Window
+### Usage Checker Pane
 
-The Claude monitor window (Ctrl-b + 2) displays usage data from `~/.claude/stats-cache.json`:
+The bottom-right pane contains a Claude instance dedicated to checking session limits. Run `/usage` in this pane to see:
 
-- **Today's activity** - Messages, sessions, tool calls
-- **Token usage by model** - Input, output, cache read/write for each model
-- **Lifetime stats** - Total sessions and messages
-- **Activity sparkline** - 24-hour usage pattern visualization
-- **Beads status** - Ready, in-progress, and blocked task counts
+- Current session context usage (how close to compaction)
+- Token counts and model info
+- Cost estimates
 
-Requires `jq` for JSON parsing. Refreshes every 30 seconds.
+This helps you know when you're approaching session limits before context compaction occurs.
 
 ## Tmux Session Settings
 
@@ -156,13 +168,14 @@ Vamp configures each tmux session with:
 ## Yazi File Viewer
 
 Yazi config at `~/.config/yazi/yazi.toml`:
+- Git integration enabled - shows file status indicators (M=modified, A=added, D=deleted, etc.)
 - Column ratio `[0, 2, 3]` - hides parent dir to maximize space in split pane
 - Line wrapping enabled for code preview
 
 **File openers:**
 - `Enter` or `o` - Opens in bat (syntax-highlighted viewer)
-- `Shift+O` - Menu to choose between bat or Cursor
-- `q` in bat - Returns to yazi
+- `Shift+O` - Menu to choose between bat, Cursor, or micro
+- `q` in bat/micro - Returns to yazi
 
 ## Versioning
 

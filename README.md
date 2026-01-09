@@ -9,10 +9,10 @@ Terminal-native development environment for Claude Code with beads integration f
 - **One command** launches full dev environment
 - **Mouse support** for scrolling, pane selection, and resizing
 - **File browser** (yazi) for project navigation
-- **System monitor** for resource tracking
-- **Claude monitor** window with token usage, activity stats, and beads status
+- **System monitor** (htop) for resource tracking
+- **Usage checker** pane for monitoring Claude session limits via `/usage`
 - **Beads integration** for persistent task/context management
-- **Git window** with lazygit
+- **Beads window** with lazygit for git operations
 - **Session persistence** - detach and reattach anytime
 
 ## Layout
@@ -21,15 +21,17 @@ Terminal-native development environment for Claude Code with beads integration f
 +------------------------+--------------+
 |                        |              |
 |     Claude Code        |  File Viewer |
-|     (main work)        |   (yazi)     |
-|                        +--------------+
-+------------------------+              |
-|   Shell / Beads        |   Monitor    |
-|                        |   (htop)     |
-+------------------------+--------------+
+|       (75%)            |   (yazi)     |
+|                        +-------+------+
++------------------------+  htop | usage|
+|   Shell (25%)          |       |checker
++------------------------+-------+------+
 
-Window 0: main    Window 1: git    Window 2: claude monitor
+Window 0: main          Window 1: beads (lazygit)
 ```
+
+- **Shell pane** runs `bd ready` on startup if beads is detected, then available for any commands
+- **Usage checker** is a Claude instance for running `/usage` to check session limits
 
 ## Install
 
@@ -92,8 +94,7 @@ vamp init
 | `Ctrl-b` + `d` | Detach session |
 | `Ctrl-b` + `[` | Scroll mode |
 | `Ctrl-b` + `0` | Main window |
-| `Ctrl-b` + `1` | Git window |
-| `Ctrl-b` + `2` | Claude monitor |
+| `Ctrl-b` + `1` | Beads window (lazygit) |
 | Mouse scroll | Scroll pane content |
 | Mouse click | Select pane |
 | Mouse drag border | Resize pane |
