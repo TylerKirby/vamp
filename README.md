@@ -12,7 +12,7 @@ Terminal-native development environment for Claude Code with beads integration f
 - **System monitor** (htop) for resource tracking
 - **Usage checker** pane for monitoring Claude session limits via `/usage`
 - **Beads integration** for persistent task/context management
-- **Beads window** with lazygit for git operations
+- **Beads window** with `bv` (beads_viewer) - Kanban, graph, insights, live reload
 - **Session persistence** - detach and reattach anytime
 
 ## Layout
@@ -27,7 +27,7 @@ Terminal-native development environment for Claude Code with beads integration f
 |   Shell (25%)          |       |checker
 +------------------------+-------+------+
 
-Window 0: main          Window 1: beads (lazygit)
+Window 0: main          Window 1: beads (bv viewer)
 ```
 
 - **Shell pane** runs `bd ready` on startup if beads is detected, then available for any commands
@@ -55,8 +55,11 @@ source ~/.zshrc
 
 **Recommended (installed automatically on macOS):**
 ```bash
-brew install yazi htop lazygit fzf jq
+brew install yazi htop fzf jq
 brew tap steveyegge/beads && brew install beads
+
+# beads_viewer (bv) - rich TUI for beads
+curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh | bash
 ```
 
 ## Usage
@@ -94,10 +97,24 @@ vamp init
 | `Ctrl-b` + `d` | Detach session |
 | `Ctrl-b` + `[` | Scroll mode |
 | `Ctrl-b` + `0` | Main window |
-| `Ctrl-b` + `1` | Beads window (lazygit) |
+| `Ctrl-b` + `1` | Beads window (`bv` viewer) |
 | Mouse scroll | Scroll pane content |
 | Mouse click | Select pane |
 | Mouse drag border | Resize pane |
+
+### Beads Viewer (`bv`) Keys
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move down / up |
+| `o` / `c` / `r` / `a` | Filter: Open / Closed / Ready / All |
+| `/` | Fuzzy search |
+| `b` | Kanban board view |
+| `i` | Insights dashboard |
+| `g` | Dependency graph |
+| `h` | History & git correlation |
+| `?` | Help overlay |
+| `q` | Quit |
 
 ## Shell Shortcuts
 

@@ -10,7 +10,7 @@
 
 set -e
 
-VAMP_VERSION="0.3.0"
+VAMP_VERSION="0.4.0"
 
 # Configuration - customize via ~/.config/vamp/config or env vars
 FILE_VIEWER="${VAMP_FILE_VIEWER:-yazi}"
@@ -59,8 +59,7 @@ ${YELLOW}KEYBINDINGS:${NC}
     Ctrl-b + z             Zoom pane (toggle fullscreen)
     Ctrl-b + d             Detach (session keeps running)
     Ctrl-b + 0             Main window
-    Ctrl-b + 1             Git window
-    Ctrl-b + 2             Claude monitor window
+    Ctrl-b + 1             Beads viewer window
 
 ${YELLOW}MOUSE:${NC}
     Scroll wheel           Scroll pane content
@@ -229,6 +228,101 @@ setup_beads() {
     echo -e "${GREEN}Beads integration complete!${NC}"
     echo -e "  Restart Claude Code for hooks to take effect."
     echo -e "  Run 'bd setup claude --check' to verify."
+}
+
+# ============================================
+# Beads viewer script (runs in window)
+# ============================================
+
+create_beads_viewer() {
+    cat << 'BEADS_SCRIPT'
+#!/bin/bash
+# Beads issue tracker viewer
+
+# Colors
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+DIM='\033[2m'
+NC='\033[0m'
+
+while true; do
+    clear
+    echo -e "${CYAN}═══════════════════════════════════════════════${NC}"
+    echo -e "${CYAN}              📿 Beads Issue Tracker            ${NC}"
+    echo -e "${CYAN}═══════════════════════════════════════════════${NC}"
+    echo ""
+
+    # Check if beads is available
+    if ! command -v bd &> /dev/null; then
+        echo -e "${RED}Beads not installed${NC}"
+        echo "Install: brew tap steveyegge/beads && brew install beads"
+        echo ""
+        echo -e "${DIM}30s refresh | Ctrl-C exit${NC}"
+        sleep 30
+        continue
+    fi
+
+    # Check if beads is initialized
+    if [ ! -d ".beads" ] && [ ! -f ".beads.jsonl" ]; then
+        echo -e "${DIM}Beads not initialized in this project${NC}"
+        echo "Run: bd init"
+        echo ""
+        echo -e "${DIM}30s refresh | Ctrl-C exit${NC}"
+        sleep 30
+        continue
+    fi
+
+    # ========== READY ISSUES ==========
+    echo -e "${GREEN}▶ READY${NC} ${DIM}(no blockers)${NC}"
+    READY_OUTPUT=$(bd ready 2>/dev/null)
+    if [ -n "$READY_OUTPUT" ]; then
+        echo "$READY_OUTPUT" | head -10
+        READY_COUNT=$(echo "$READY_OUTPUT" | wc -l | tr -d ' ')
+        if [ "$READY_COUNT" -gt 10 ]; then
+            echo -e "${DIM}  ... and $((READY_COUNT - 10)) more${NC}"
+        fi
+    else
+        echo -e "  ${DIM}None${NC}"
+    fi
+    echo ""
+
+    # ========== IN PROGRESS ==========
+    echo -e "${YELLOW}◉ IN PROGRESS${NC}"
+    IP_OUTPUT=$(bd list --status in_progress 2>/dev/null)
+    if [ -n "$IP_OUTPUT" ]; then
+        echo "$IP_OUTPUT" | head -10
+    else
+        echo -e "  ${DIM}None${NC}"
+    fi
+    echo ""
+
+    # ========== BLOCKED ==========
+    echo -e "${RED}⊘ BLOCKED${NC}"
+    BLOCKED_OUTPUT=$(bd list --status blocked 2>/dev/null)
+    if [ -n "$BLOCKED_OUTPUT" ]; then
+        echo "$BLOCKED_OUTPUT" | head -10
+    else
+        echo -e "  ${DIM}None${NC}"
+    fi
+    echo ""
+
+    # ========== STATS ==========
+    echo -e "${CYAN}─────────────────────────────────────────────────${NC}"
+    STATS=$(bd stats 2>/dev/null | head -5)
+    if [ -n "$STATS" ]; then
+        echo "$STATS"
+    fi
+    echo ""
+
+    # ========== COMMANDS ==========
+    echo -e "${DIM}Commands: bd ready | bd show <id> | bd create | bd close <id>${NC}"
+    echo -e "${DIM}30s refresh | Ctrl-C exit${NC}"
+
+    sleep 30
+done
+BEADS_SCRIPT
 }
 
 # ============================================
@@ -491,12 +585,15 @@ start_session() {
     # Focus Claude pane
     tmux select-pane -t "$SESSION_NAME:0.0"
 
-    # Window 1: Beads/Git
+    # Window 1: Beads viewer (prefer bv if installed, fallback to simple script)
     tmux new-window -t "$SESSION_NAME" -n "beads" -c "$PROJECT_DIR"
-    if command -v lazygit &> /dev/null; then
-        tmux send-keys -t "$SESSION_NAME:beads" "lazygit" Enter
+    if command -v bv &> /dev/null; then
+        tmux send-keys -t "$SESSION_NAME:beads" "bv" Enter
     else
-        tmux send-keys -t "$SESSION_NAME:beads" "git status" Enter
+        local BEADS_SCRIPT="/tmp/vamp-beads-viewer-$$.sh"
+        create_beads_viewer > "$BEADS_SCRIPT"
+        chmod +x "$BEADS_SCRIPT"
+        tmux send-keys -t "$SESSION_NAME:beads" "$BEADS_SCRIPT" Enter
     fi
 
     # Back to main

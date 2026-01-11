@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vamp is a terminal-native development environment for Claude Code. It creates a tmux-based workspace with integrated file browsing (yazi), system monitoring (htop), git interface (lazygit), and optional beads task tracking.
+Vamp is a terminal-native development environment for Claude Code. It creates a tmux-based workspace with integrated file browsing (yazi), system monitoring (htop), beads issue viewer, and optional beads task tracking.
 
 ## Commands
 
@@ -36,12 +36,12 @@ No build or test commands - this is a bash-only project.
 - Parses subcommands (list, attach, kill, init, help)
 - Creates tmux sessions with a 5-pane layout: Claude Code, shell, file viewer, htop, usage checker
 - The shell pane runs `bd ready` on startup if beads is detected, then is available for any commands
-- Adds one additional tmux window: beads (lazygit)
+- Adds one additional tmux window: beads viewer
 - Includes a usage checker pane (Claude instance) for running `/usage` to check session limits
 
 **Tmux Windows:**
 - Window 0 "main": 5-pane layout with Claude Code, shell, yazi, htop, and usage checker
-- Window 1 "beads": lazygit for git operations
+- Window 1 "beads": beads issue viewer (`bv` if installed, simple dashboard fallback)
 
 **Main Window Panes:**
 - Pane 0: Claude Code (top left, 75%) - main work area
@@ -189,4 +189,4 @@ Increment the version when adding features or fixes. The version displays in the
 ## Dependencies
 
 Required: tmux, Claude Code CLI
-Recommended: yazi, htop, lazygit, fzf, jq, beads, bat
+Recommended: yazi, htop, fzf, jq, beads, bv (beads_viewer), bat
