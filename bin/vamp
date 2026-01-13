@@ -634,6 +634,7 @@ swarm_merge() {
 swarm_finish() {
     local project_dir="${1:-$(pwd)}"
     local delete_branches="${2:-}"
+    local close_window="${3:-}"
 
     echo -e "${CYAN}═══ Swarm Finish Workflow ═══${NC}"
     echo ""
@@ -654,6 +655,21 @@ swarm_finish() {
 
     # Cleanup worktrees
     cleanup_worktrees "$project_dir" "$delete_branches"
+
+    # Close swarm window if requested
+    if [ "$close_window" = "yes" ]; then
+        local project_name=$(basename "$project_dir")
+        local session_name="vamp-$(echo "$project_name" | tr '.:' '-')"
+
+        if tmux has-session -t "$session_name" 2>/dev/null; then
+            if tmux list-windows -t "$session_name" -F '#{window_name}' | grep -q "^swarm$"; then
+                echo ""
+                echo -e "${CYAN}Closing swarm window...${NC}"
+                tmux kill-window -t "$session_name:swarm"
+                echo -e "  ${GREEN}✓${NC} Swarm window closed"
+            fi
+        fi
+    fi
 }
 
 # Create tmux window with N panes in a grid layout for swarm workers
@@ -1155,6 +1171,7 @@ start_swarm() {
     local PROJECT_DIR="$(pwd)"
     local WORKER_COUNT=4
     local ACTION=""
+    local CLOSE_WINDOW=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -1187,6 +1204,10 @@ start_swarm() {
                 ACTION="finish-branches"
                 shift
                 ;;
+            --close)
+                CLOSE_WINDOW="yes"
+                shift
+                ;;
             -h|--help)
                 echo -e "${CYAN}  ♪♫ vamp swarm 🐝 ♫♪${NC}"
                 echo -e "  ${DIM}Multi-instance Claude Code with git worktrees${NC}"
@@ -1197,7 +1218,8 @@ start_swarm() {
                 echo "    vamp swarm --status        Show swarm status"
                 echo "    vamp swarm --cleanup       Cleanup worktrees (keep branches)"
                 echo "    vamp swarm --merge         Merge swarm branches to main"
-                echo "    vamp swarm --finish        Merge + cleanup + delete branches"
+                echo "    vamp swarm --finish        Merge + cleanup (keep window open)"
+                echo "    vamp swarm --finish --close  Merge + cleanup + close swarm window"
                 echo ""
                 echo -e "${YELLOW}WORKFLOW:${NC}"
                 echo "    1. vamp swarm              Create worktrees, start workers"
@@ -1234,11 +1256,11 @@ start_swarm() {
             return 0
             ;;
         finish)
-            swarm_finish "$PROJECT_DIR"
+            swarm_finish "$PROJECT_DIR" "" "$CLOSE_WINDOW"
             return 0
             ;;
         finish-branches)
-            swarm_finish "$PROJECT_DIR" "branches"
+            swarm_finish "$PROJECT_DIR" "branches" "$CLOSE_WINDOW"
             return 0
             ;;
     esac
