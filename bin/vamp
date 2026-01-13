@@ -10,7 +10,7 @@
 
 set -e
 
-VAMP_VERSION="0.4.0"
+VAMP_VERSION="0.1.0"
 
 # Configuration - customize via ~/.config/vamp/config or env vars
 FILE_VIEWER="${VAMP_FILE_VIEWER:-yazi}"
@@ -45,7 +45,6 @@ ${YELLOW}USAGE:${NC}
     vamp kill <name>       Kill a session
     vamp killall           Kill all vamp sessions
     vamp init              Initialize project with beads + CLAUDE.md
-    vamp setup             Install beads hooks for Claude Code + git
     vamp help              Show this help
 
 ${YELLOW}EXAMPLES:${NC}
@@ -59,7 +58,8 @@ ${YELLOW}KEYBINDINGS:${NC}
     Ctrl-b + z             Zoom pane (toggle fullscreen)
     Ctrl-b + d             Detach (session keeps running)
     Ctrl-b + 0             Main window
-    Ctrl-b + 1             Beads viewer window
+    Ctrl-b + 1             Git window
+    Ctrl-b + 2             Claude monitor window
 
 ${YELLOW}MOUSE:${NC}
     Scroll wheel           Scroll pane content
@@ -154,15 +154,6 @@ init_project() {
         else
             echo -e "  ${DIM}○${NC} Beads already initialized"
         fi
-
-        # Install git hooks
-        bd hooks install 2>/dev/null && echo -e "  ${GREEN}✓${NC} Git hooks installed"
-
-        # Check Claude integration
-        if ! bd setup claude --check &>/dev/null; then
-            echo -e "  ${YELLOW}?${NC} Claude Code hooks not installed"
-            echo -e "      Run 'vamp setup' to install globally"
-        fi
     else
         echo -e "  ${YELLOW}○${NC} Beads not installed (brew tap steveyegge/beads && brew install beads)"
     fi
@@ -202,129 +193,6 @@ EOF
     echo -e "\n${GREEN}Ready! Run 'vamp' to start${NC}"
 }
 
-setup_beads() {
-    echo -e "${CYAN}Setting up beads integration...${NC}"
-
-    if ! command -v bd &> /dev/null; then
-        echo -e "  ${RED}✗${NC} beads not installed"
-        echo -e "    Install: brew tap steveyegge/beads && brew install beads"
-        return 1
-    fi
-
-    # Install Claude Code hooks
-    echo -e "${BLUE}Installing Claude Code hooks...${NC}"
-    bd setup claude
-    echo -e "  ${GREEN}✓${NC} Claude Code hooks installed"
-
-    # Install git hooks if in a git repo
-    if [ -d ".git" ]; then
-        echo -e "${BLUE}Installing git hooks...${NC}"
-        bd hooks install 2>/dev/null && echo -e "  ${GREEN}✓${NC} Git hooks installed"
-    else
-        echo -e "  ${DIM}○${NC} Not a git repo, skipping git hooks"
-    fi
-
-    echo ""
-    echo -e "${GREEN}Beads integration complete!${NC}"
-    echo -e "  Restart Claude Code for hooks to take effect."
-    echo -e "  Run 'bd setup claude --check' to verify."
-}
-
-# ============================================
-# Beads viewer script (runs in window)
-# ============================================
-
-create_beads_viewer() {
-    cat << 'BEADS_SCRIPT'
-#!/bin/bash
-# Beads issue tracker viewer
-
-# Colors
-CYAN='\033[0;36m'
-YELLOW='\033[1;33m'
-GREEN='\033[0;32m'
-RED='\033[0;31m'
-DIM='\033[2m'
-NC='\033[0m'
-
-while true; do
-    clear
-    echo -e "${CYAN}═══════════════════════════════════════════════${NC}"
-    echo -e "${CYAN}              📿 Beads Issue Tracker            ${NC}"
-    echo -e "${CYAN}═══════════════════════════════════════════════${NC}"
-    echo ""
-
-    # Check if beads is available
-    if ! command -v bd &> /dev/null; then
-        echo -e "${RED}Beads not installed${NC}"
-        echo "Install: brew tap steveyegge/beads && brew install beads"
-        echo ""
-        echo -e "${DIM}30s refresh | Ctrl-C exit${NC}"
-        sleep 30
-        continue
-    fi
-
-    # Check if beads is initialized
-    if [ ! -d ".beads" ] && [ ! -f ".beads.jsonl" ]; then
-        echo -e "${DIM}Beads not initialized in this project${NC}"
-        echo "Run: bd init"
-        echo ""
-        echo -e "${DIM}30s refresh | Ctrl-C exit${NC}"
-        sleep 30
-        continue
-    fi
-
-    # ========== READY ISSUES ==========
-    echo -e "${GREEN}▶ READY${NC} ${DIM}(no blockers)${NC}"
-    READY_OUTPUT=$(bd ready 2>/dev/null)
-    if [ -n "$READY_OUTPUT" ]; then
-        echo "$READY_OUTPUT" | head -10
-        READY_COUNT=$(echo "$READY_OUTPUT" | wc -l | tr -d ' ')
-        if [ "$READY_COUNT" -gt 10 ]; then
-            echo -e "${DIM}  ... and $((READY_COUNT - 10)) more${NC}"
-        fi
-    else
-        echo -e "  ${DIM}None${NC}"
-    fi
-    echo ""
-
-    # ========== IN PROGRESS ==========
-    echo -e "${YELLOW}◉ IN PROGRESS${NC}"
-    IP_OUTPUT=$(bd list --status in_progress 2>/dev/null)
-    if [ -n "$IP_OUTPUT" ]; then
-        echo "$IP_OUTPUT" | head -10
-    else
-        echo -e "  ${DIM}None${NC}"
-    fi
-    echo ""
-
-    # ========== BLOCKED ==========
-    echo -e "${RED}⊘ BLOCKED${NC}"
-    BLOCKED_OUTPUT=$(bd list --status blocked 2>/dev/null)
-    if [ -n "$BLOCKED_OUTPUT" ]; then
-        echo "$BLOCKED_OUTPUT" | head -10
-    else
-        echo -e "  ${DIM}None${NC}"
-    fi
-    echo ""
-
-    # ========== STATS ==========
-    echo -e "${CYAN}─────────────────────────────────────────────────${NC}"
-    STATS=$(bd stats 2>/dev/null | head -5)
-    if [ -n "$STATS" ]; then
-        echo "$STATS"
-    fi
-    echo ""
-
-    # ========== COMMANDS ==========
-    echo -e "${DIM}Commands: bd ready | bd show <id> | bd create | bd close <id>${NC}"
-    echo -e "${DIM}30s refresh | Ctrl-C exit${NC}"
-
-    sleep 30
-done
-BEADS_SCRIPT
-}
-
 # ============================================
 # Claude monitor script (runs in pane)
 # ============================================
@@ -332,151 +200,56 @@ BEADS_SCRIPT
 create_claude_monitor() {
     cat << 'MONITOR_SCRIPT'
 #!/bin/bash
-# Claude Code usage monitor - mirrors /usage data
+# Claude Code usage monitor
 
 CLAUDE_DIR="$HOME/.claude"
-STATS_FILE="$CLAUDE_DIR/stats-cache.json"
-
-# Colors
-CYAN='\033[0;36m'
-YELLOW='\033[1;33m'
-GREEN='\033[0;32m'
-DIM='\033[2m'
-NC='\033[0m'
-
-# Format large numbers (1234567 -> 1.23M)
-format_tokens() {
-    local n=$1
-    if [ -z "$n" ] || [ "$n" = "null" ]; then
-        echo "0"
-    elif [ "$n" -ge 1000000 ] 2>/dev/null; then
-        awk "BEGIN {printf \"%.1fM\", $n/1000000}"
-    elif [ "$n" -ge 1000 ] 2>/dev/null; then
-        awk "BEGIN {printf \"%.1fK\", $n/1000}"
-    else
-        echo "$n"
-    fi
-}
-
-# Draw hourly activity sparkline
-draw_sparkline() {
-    local hours="$1"
-    local chars=(" " "▁" "▂" "▃" "▄" "▅" "▆" "▇" "█")
-    local max=$(echo "$hours" | jq -r 'to_entries | map(.value) | max // 1')
-
-    for h in $(seq 0 23); do
-        local count=$(echo "$hours" | jq -r ".[\"$h\"] // 0")
-        local idx=0
-        if [ "$max" -gt 0 ] && [ "$count" -gt 0 ]; then
-            idx=$(awk "BEGIN {printf \"%d\", ($count * 8 / $max)}")
-            [ $idx -gt 8 ] && idx=8
-        fi
-        printf "${chars[$idx]}"
-    done
-}
 
 while true; do
     clear
-    echo -e "${CYAN}═══ Claude Usage ═══${NC}"
+    echo -e "\033[0;36m═══ Claude Code Monitor ═══\033[0m"
     echo ""
-
-    # Check if stats file exists
-    if [ ! -f "$STATS_FILE" ]; then
-        echo -e "${DIM}No usage stats yet.${NC}"
-        echo "Use Claude Code to generate stats."
-        echo ""
-        echo -e "${DIM}30s refresh | Ctrl-C exit${NC}"
-        sleep 30
-        continue
+    
+    # Session info
+    if [ -d "$CLAUDE_DIR/projects" ]; then
+        ACTIVE_SESSIONS=$(find "$CLAUDE_DIR/projects" -name "*.json" -mmin -60 2>/dev/null | wc -l | tr -d ' ')
+        echo -e "\033[1;33mRecent Sessions:\033[0m $ACTIVE_SESSIONS (last hour)"
     fi
-
-    # Check jq availability
-    if ! command -v jq &> /dev/null; then
-        echo -e "${YELLOW}jq required${NC}"
-        echo "Install: brew install jq"
-        sleep 30
-        continue
+    
+    # Try to get current session stats from Claude's internal files
+    LATEST_SESSION=$(find "$CLAUDE_DIR/projects" -name "*.json" -type f -printf '%T@ %p\n' 2>/dev/null | sort -n | tail -1 | cut -d' ' -f2-)
+    
+    if [ -n "$LATEST_SESSION" ] && [ -f "$LATEST_SESSION" ]; then
+        echo -e "\033[1;33mLatest Session:\033[0m"
+        # Extract basic stats if possible
+        if command -v jq &> /dev/null; then
+            MESSAGES=$(jq -r '.messages | length // 0' "$LATEST_SESSION" 2>/dev/null || echo "?")
+            echo "  Messages: $MESSAGES"
+        fi
+        echo "  File: $(basename "$LATEST_SESSION")"
+        echo "  Modified: $(stat -f '%Sm' -t '%H:%M:%S' "$LATEST_SESSION" 2>/dev/null || stat -c '%y' "$LATEST_SESSION" 2>/dev/null | cut -d'.' -f1)"
     fi
-
-    # Parse stats
-    STATS=$(cat "$STATS_FILE")
-    TODAY=$(date +%Y-%m-%d)
-
-    # ========== TODAY'S STATS ==========
-    echo -e "${YELLOW}TODAY${NC} ${DIM}($TODAY)${NC}"
-
-    TODAY_DATA=$(echo "$STATS" | jq -r --arg d "$TODAY" '.dailyActivity[] | select(.date == $d)' 2>/dev/null)
-    if [ -n "$TODAY_DATA" ]; then
-        MSGS=$(echo "$TODAY_DATA" | jq -r '.messageCount // 0')
-        SESSIONS=$(echo "$TODAY_DATA" | jq -r '.sessionCount // 0')
-        TOOLS=$(echo "$TODAY_DATA" | jq -r '.toolCallCount // 0')
-        printf "  Messages: %s  Sessions: %s\n" "$MSGS" "$SESSIONS"
-        printf "  Tool Calls: %s\n" "$TOOLS"
-    else
-        echo -e "  ${DIM}No activity today${NC}"
-    fi
-
+    
     echo ""
-
-    # ========== TOKEN USAGE BY MODEL ==========
-    echo -e "${YELLOW}TOKENS${NC} ${DIM}(All Time)${NC}"
-
-    # Get all model names
-    MODELS=$(echo "$STATS" | jq -r '.modelUsage | keys[]' 2>/dev/null)
-
-    for model in $MODELS; do
-        # Extract short name (Opus 4.5 or Sonnet 4.5)
-        SHORT_NAME=$(echo "$model" | sed 's/claude-//' | sed 's/-[0-9]*$//' | sed 's/-/ /g' | awk '{print toupper(substr($1,1,1)) substr($1,2) " " $2 "." $3}')
-
-        IN=$(echo "$STATS" | jq -r ".modelUsage[\"$model\"].inputTokens // 0")
-        OUT=$(echo "$STATS" | jq -r ".modelUsage[\"$model\"].outputTokens // 0")
-        CACHE_R=$(echo "$STATS" | jq -r ".modelUsage[\"$model\"].cacheReadInputTokens // 0")
-        CACHE_W=$(echo "$STATS" | jq -r ".modelUsage[\"$model\"].cacheCreationInputTokens // 0")
-
-        echo -e "  ${GREEN}$SHORT_NAME${NC}"
-        printf "    In: %s  Out: %s\n" "$(format_tokens $IN)" "$(format_tokens $OUT)"
-        printf "    Cache: %s read, %s write\n" "$(format_tokens $CACHE_R)" "$(format_tokens $CACHE_W)"
-    done
-
+    echo -e "\033[1;33mClaude Commands:\033[0m"
+    echo "  /cost        - Show token usage"
+    echo "  /compact     - Compress context"
+    echo "  /clear       - Clear conversation"
+    echo "  /model       - Switch model"
+    
     echo ""
-
-    # ========== LIFETIME STATS ==========
-    echo -e "${YELLOW}LIFETIME${NC}"
-    TOTAL_SESSIONS=$(echo "$STATS" | jq -r '.totalSessions // 0')
-    TOTAL_MSGS=$(echo "$STATS" | jq -r '.totalMessages // 0')
-    printf "  Sessions: %s  Messages: %s\n" "$TOTAL_SESSIONS" "$(format_tokens $TOTAL_MSGS)"
-
-    echo ""
-
-    # ========== ACTIVITY SPARKLINE ==========
-    echo -e "${YELLOW}ACTIVITY${NC} ${DIM}(by hour)${NC}"
-    HOURS=$(echo "$STATS" | jq -r '.hourCounts // {}')
-    if [ "$HOURS" != "{}" ] && [ "$HOURS" != "null" ]; then
-        printf "  "
-        draw_sparkline "$HOURS"
-        echo ""
-        echo -e "  ${DIM}^0    ^6   ^12   ^18  ^23${NC}"
-    else
-        echo -e "  ${DIM}No hourly data${NC}"
-    fi
-
-    echo ""
-
-    # ========== BEADS STATUS ==========
-    echo -e "${YELLOW}BEADS${NC}"
+    echo -e "\033[1;33mBeads Status:\033[0m"
     if command -v bd &> /dev/null && [ -d ".beads" -o -f ".beads.jsonl" ]; then
-        READY=$(bd ready --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
-        IN_PROG=$(bd list --status in_progress --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
+        READY=$(bd ready --json 2>/dev/null | jq -r 'length' 2>/dev/null || bd ready 2>/dev/null | wc -l | tr -d ' ')
         BLOCKED=$(bd list --status blocked --json 2>/dev/null | jq -r 'length' 2>/dev/null || echo "?")
-        printf "  Ready: %s  In Progress: %s  Blocked: %s\n" "$READY" "$IN_PROG" "$BLOCKED"
+        echo "  Ready tasks: $READY"
+        echo "  Blocked: $BLOCKED"
     else
-        echo -e "  ${DIM}Not initialized${NC}"
+        echo "  Not initialized (run: bd init)"
     fi
-
+    
     echo ""
-    echo -e "${DIM}─────────────────────────────${NC}"
-    echo -e "${DIM}30s refresh | Ctrl-C exit${NC}"
-
+    echo -e "\033[2mRefreshes every 30s | Ctrl-C to exit\033[0m"
+    
     sleep 30
 done
 MONITOR_SCRIPT
@@ -572,39 +345,34 @@ start_session() {
     
     # Pane 2: File viewer
     tmux send-keys -t "$SESSION_NAME:0.2" "cd '$PROJECT_DIR' && $FILE_VIEWER" Enter
-
-    # Split pane 3 (monitor area) into htop + claude usage
-    tmux split-window -t "$SESSION_NAME:0.3" -v -p 50 -c "$PROJECT_DIR"
-
-    # Pane 3: System monitor (htop)
+    
+    # Pane 3: System monitor
     tmux send-keys -t "$SESSION_NAME:0.3" "$MONITOR_CMD" Enter
-
-    # Pane 4: Claude usage checker
-    tmux send-keys -t "$SESSION_NAME:0.4" "cd '$PROJECT_DIR' && clear && echo '📊 Claude Usage (run /usage to check limits)' && $CLAUDE_CMD" Enter
-
+    
     # Focus Claude pane
     tmux select-pane -t "$SESSION_NAME:0.0"
-
-    # Window 1: Beads viewer (prefer bv if installed, fallback to simple script)
-    tmux new-window -t "$SESSION_NAME" -n "beads" -c "$PROJECT_DIR"
-    if command -v bv &> /dev/null; then
-        tmux send-keys -t "$SESSION_NAME:beads" "bv" Enter
+    
+    # Window 1: Git
+    tmux new-window -t "$SESSION_NAME" -n "git" -c "$PROJECT_DIR"
+    if command -v lazygit &> /dev/null; then
+        tmux send-keys -t "$SESSION_NAME:git" "lazygit" Enter
     else
-        local BEADS_SCRIPT="/tmp/vamp-beads-viewer-$$.sh"
-        create_beads_viewer > "$BEADS_SCRIPT"
-        chmod +x "$BEADS_SCRIPT"
-        tmux send-keys -t "$SESSION_NAME:beads" "$BEADS_SCRIPT" Enter
+        tmux send-keys -t "$SESSION_NAME:git" "git status" Enter
     fi
-
+    
+    # Window 2: Claude monitor
+    tmux new-window -t "$SESSION_NAME" -n "monitor" -c "$PROJECT_DIR"
+    tmux send-keys -t "$SESSION_NAME:monitor" "cd '$PROJECT_DIR' && $MONITOR_SCRIPT" Enter
+    
     # Back to main
     tmux select-window -t "$SESSION_NAME:0"
-
+    
     echo ""
     echo -e "${CYAN}Keybindings:${NC}"
     echo "  Ctrl-b + arrows  Navigate panes"
     echo "  Ctrl-b + z       Zoom pane"
     echo "  Ctrl-b + d       Detach"
-    echo "  Ctrl-b + 0/1     Switch windows"
+    echo "  Ctrl-b + 0/1/2   Switch windows"
     echo ""
     echo -e "${CYAN}Mouse:${NC}"
     echo "  Scroll           Scroll content"
@@ -637,9 +405,6 @@ case "${1:-}" in
         ;;
     init)
         init_project
-        ;;
-    setup)
-        setup_beads
         ;;
     version|--version|-v)
         echo "vamp v${VAMP_VERSION}"
