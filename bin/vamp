@@ -306,8 +306,8 @@ create_worktrees() {
 
     # Add to .gitignore if not already
     if ! grep -q "^$SWARM_DIR" "$project_dir/.gitignore" 2>/dev/null; then
-        echo -e "\n# Vamp swarm worktrees\n$SWARM_DIR/\n.vamp-worker" >> "$project_dir/.gitignore"
-        echo -e "  ${GREEN}✓${NC} Added $SWARM_DIR/ and .vamp-worker to .gitignore"
+        echo -e "\n# Vamp swarm worktrees\n$SWARM_DIR/\n.vamp-worker\n.swarm-prompt" >> "$project_dir/.gitignore"
+        echo -e "  ${GREEN}✓${NC} Added $SWARM_DIR/ and worker files to .gitignore"
     fi
 
     echo -e "${CYAN}Creating $count swarm worktrees from $base_ref...${NC}"
@@ -339,9 +339,9 @@ MAIN_PROJECT_PATH=$project_dir
 # NEVER edit files in MAIN_PROJECT_PATH
 EOF
 
-            # Ensure .vamp-worker and common artifacts are gitignored in worktree
+            # Ensure worker files and common artifacts are gitignored in worktree
             if ! grep -q "^\.vamp-worker" "$worktree/.gitignore" 2>/dev/null; then
-                echo -e "\n# Vamp worker context\n.vamp-worker\n\n# Common test artifacts\n__pycache__/\n*.pyc\nnode_modules/" >> "$worktree/.gitignore"
+                echo -e "\n# Vamp worker context\n.vamp-worker\n.swarm-prompt\n\n# Common test artifacts\n__pycache__/\n*.pyc\nnode_modules/" >> "$worktree/.gitignore"
             fi
         else
             echo -e "  ${RED}✗${NC} Failed to create worker-$i"
@@ -573,7 +573,7 @@ swarm_merge() {
 
         if [ "$ahead" -gt 0 ]; then
             # Check for uncommitted or untracked files
-            local wt_dirty=$(git -C "$wt" status --porcelain 2>/dev/null | grep -v "^?? __pycache__" | grep -v "^?? .*\.pyc")
+            local wt_dirty=$(git -C "$wt" status --porcelain 2>/dev/null | grep -v "^?? __pycache__" | grep -v "^?? .*\.pyc" | grep -v "^?? \.swarm-prompt")
             if [ -n "$wt_dirty" ]; then
                 echo -e "${YELLOW}Warning: $(basename $wt) has uncommitted changes${NC}"
                 echo "$wt_dirty" | head -5 | sed 's/^/  /'
@@ -788,32 +788,20 @@ init_swarm_workers() {
                 tmux send-keys -t "$session:swarm.$pane_idx" "bd ready" Enter
             fi
 
-            # Start Claude Code with swarm context
-            # Pass initial prompt as argument to provide worker context
-            local swarm_prompt="You are SWARM WORKER $i on branch '$branch'.
+            # Write detailed instructions to file
+            cat > "$worktree/.swarm-prompt" << PROMPT_EOF
+SWARM WORKER $i - Branch: $branch
+Worktree: $worktree (ONLY edit files here)
+Forbidden: $project_dir (DO NOT touch)
 
-⚠️ CRITICAL ISOLATION REQUIREMENT ⚠️
-
-You are working in an ISOLATED GIT WORKTREE. Your workspace:
-  ✓ YOUR DIRECTORY: $worktree
-  ✗ FORBIDDEN: $project_dir (main project - DO NOT EDIT)
-
-STRICT RULES:
-1. ALL file operations MUST use paths starting with: $worktree
-2. NEVER use paths starting with: $project_dir
-3. NEVER cd outside your worktree directory
-4. If unsure, run 'pwd' to verify you're in: $worktree
-5. Your branch '$branch' is isolated - changes merge to main later
-
-WORKFLOW:
-1. Run 'bd ready' to find available work
-2. Claim ONE task: 'bd update <id> --status=in_progress'
-3. Complete the work in THIS worktree only
-4. Close task: 'bd close <id>'
-
-Run 'bd ready' now and pick ONE task to work on."
-
-            tmux send-keys -t "$session:swarm.$pane_idx" "$CLAUDE_CMD \"$swarm_prompt\"" Enter
+Pick ONE task from bd ready output above:
+1. Claim: bd update <task-id> --status=in_progress
+2. Implement it
+3. Commit: git add . && git commit -m "description"
+4. Close: bd close <task-id>
+PROMPT_EOF
+            # Start Claude with simple prompt - it will see bd ready output and can read .swarm-prompt
+            tmux send-keys -t "$session:swarm.$pane_idx" "$CLAUDE_CMD 'Read .swarm-prompt for instructions, then pick ONE task from the bd ready output above and implement it.'" Enter
         else
             tmux send-keys -t "$session:swarm.$pane_idx" "echo 'Worktree not found: $worktree'" Enter
         fi
