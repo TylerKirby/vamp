@@ -35,8 +35,18 @@ NC='\033[0m'
 # ============================================
 
 show_help() {
+    echo -e "${CYAN}"
+    cat << 'LOGO'
+  ♪♫                            ♫♪
+   __   __  __ _  _ __ ___   _ __
+   \ \ / / / _` || '_ ` _ \ | '_ \
+    \ V / | (_| || | | | | || |_) |
+     \_/   \__,_||_| |_| |_|| .__/
+                            |_|
+LOGO
+    echo -e "${NC}"
     cat << EOF
-${CYAN}vamp${NC} v${VAMP_VERSION} - Terminal-native Claude Code environment
+  ${DIM}v${VAMP_VERSION} - Terminal-native Claude Code environment${NC}
 
 ${YELLOW}USAGE:${NC}
     vamp [project-dir]     Start dev environment (default: current dir)
@@ -704,7 +714,7 @@ create_swarm_window() {
 }
 
 # Initialize each swarm pane with a worker
-# Each worker: cd to worktree, run bd ready, start claude
+# Each worker: cd to worktree, run bd ready, start claude with context
 init_swarm_workers() {
     local session="$1"
     local count="${2:-4}"
@@ -728,8 +738,24 @@ init_swarm_workers() {
                 tmux send-keys -t "$session:swarm.$pane_idx" "bd ready" Enter
             fi
 
-            # Start Claude Code
-            tmux send-keys -t "$session:swarm.$pane_idx" "$CLAUDE_CMD" Enter
+            # Start Claude Code with swarm context
+            # Pass initial prompt as argument to provide worker context
+            local swarm_prompt="You are SWARM WORKER $i on branch '$branch'.
+
+CRITICAL: You are working in an ISOLATED GIT WORKTREE at:
+  $worktree
+
+RULES:
+1. ONLY edit files in THIS directory ($worktree)
+2. NEVER cd to or edit files in the main project directory
+3. Use 'bd ready' to find available work
+4. Claim a task with 'bd update <id> --status=in_progress'
+5. When done, use 'bd close <id>' to mark complete
+6. Your changes will be merged to main later
+
+Run 'bd ready' now and pick ONE task to work on."
+
+            tmux send-keys -t "$session:swarm.$pane_idx" "$CLAUDE_CMD \"$swarm_prompt\"" Enter
         else
             tmux send-keys -t "$session:swarm.$pane_idx" "echo 'Worktree not found: $worktree'" Enter
         fi
@@ -1002,9 +1028,9 @@ start_session() {
     local PROJECT_NAME=$(basename "$PROJECT_DIR")
     local SESSION_NAME="vamp-$(echo "$PROJECT_NAME" | tr '.:' '-')"
     
-    echo -e "${CYAN}♪ vamp${NC} ${DIM}v${VAMP_VERSION}${NC}"
-    echo -e "${GREEN}Project:${NC} $PROJECT_NAME"
-    echo -e "${GREEN}Path:${NC} $PROJECT_DIR"
+    echo -e "${CYAN}  ♪♫ vamp ♫♪${NC} ${DIM}v${VAMP_VERSION}${NC}"
+    echo -e "${GREEN}  Project:${NC} $PROJECT_NAME"
+    echo -e "${GREEN}  Path:${NC} $PROJECT_DIR"
     
     # Check if session exists
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
@@ -1162,7 +1188,8 @@ start_swarm() {
                 shift
                 ;;
             -h|--help)
-                echo -e "${CYAN}vamp swarm${NC} - Multi-instance Claude Code with git worktrees"
+                echo -e "${CYAN}  ♪♫ vamp swarm 🐝 ♫♪${NC}"
+                echo -e "  ${DIM}Multi-instance Claude Code with git worktrees${NC}"
                 echo ""
                 echo -e "${YELLOW}USAGE:${NC}"
                 echo "    vamp swarm                 Start swarm (default: 4 workers)"
@@ -1220,9 +1247,9 @@ start_swarm() {
     local PROJECT_NAME=$(basename "$PROJECT_DIR")
     local SESSION_NAME="vamp-$(echo "$PROJECT_NAME" | tr '.:' '-')"
 
-    echo -e "${CYAN}🐝 vamp swarm${NC} ${DIM}v${VAMP_VERSION}${NC}"
-    echo -e "${GREEN}Project:${NC} $PROJECT_NAME"
-    echo -e "${GREEN}Workers:${NC} $WORKER_COUNT"
+    echo -e "${CYAN}  ♪♫ vamp swarm 🐝 ♫♪${NC} ${DIM}v${VAMP_VERSION}${NC}"
+    echo -e "${GREEN}  Project:${NC} $PROJECT_NAME"
+    echo -e "${GREEN}  Workers:${NC} $WORKER_COUNT"
     echo ""
 
     # Check if regular session exists
