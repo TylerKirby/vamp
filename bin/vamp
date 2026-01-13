@@ -338,6 +338,11 @@ MAIN_PROJECT_PATH=$project_dir
 # IMPORTANT: All file operations must stay within WORKTREE_PATH
 # NEVER edit files in MAIN_PROJECT_PATH
 EOF
+
+            # Ensure .vamp-worker and common artifacts are gitignored in worktree
+            if ! grep -q "^\.vamp-worker" "$worktree/.gitignore" 2>/dev/null; then
+                echo -e "\n# Vamp worker context\n.vamp-worker\n\n# Common test artifacts\n__pycache__/\n*.pyc\nnode_modules/" >> "$worktree/.gitignore"
+            fi
         else
             echo -e "  ${RED}✗${NC} Failed to create worker-$i"
         fi
@@ -567,9 +572,11 @@ swarm_merge() {
         local ahead=$(git -C "$wt" rev-list --count "$main_branch".."$branch" 2>/dev/null || echo "0")
 
         if [ "$ahead" -gt 0 ]; then
-            # Check for uncommitted changes
-            if ! git -C "$wt" diff-index --quiet HEAD -- 2>/dev/null; then
+            # Check for uncommitted or untracked files
+            local wt_dirty=$(git -C "$wt" status --porcelain 2>/dev/null | grep -v "^?? __pycache__" | grep -v "^?? .*\.pyc")
+            if [ -n "$wt_dirty" ]; then
                 echo -e "${YELLOW}Warning: $(basename $wt) has uncommitted changes${NC}"
+                echo "$wt_dirty" | head -5 | sed 's/^/  /'
                 echo "  Commit or stash changes before merging"
                 continue
             fi
@@ -593,9 +600,12 @@ swarm_merge() {
         [[ ! "$confirm" =~ ^[Yy]$ ]] && return 1
     fi
 
-    # Ensure main worktree is clean
-    if ! git -C "$project_dir" diff-index --quiet HEAD -- 2>/dev/null; then
-        echo -e "${RED}Error: Main worktree has uncommitted changes${NC}"
+    # Ensure main worktree is clean (check both staged/unstaged changes AND untracked files)
+    local dirty_files=$(git -C "$project_dir" status --porcelain 2>/dev/null)
+    if [ -n "$dirty_files" ]; then
+        echo -e "${RED}Error: Main worktree has uncommitted or untracked files${NC}"
+        echo "$dirty_files" | head -10 | sed 's/^/  /'
+        echo ""
         echo "Commit or stash changes before merging"
         return 1
     fi
@@ -1287,16 +1297,24 @@ start_swarm() {
         local ready_count=$(bd ready --json 2>/dev/null | jq length 2>/dev/null || echo "0")
 
         if [ -z "$EXPLICIT_WORKERS" ]; then
-            # Auto-scale: min(4, ready_count), minimum of 1
-            if [ "$ready_count" -gt 0 ] && [ "$ready_count" -lt "$WORKER_COUNT" ]; then
-                WORKER_COUNT="$ready_count"
-                echo -e "${CYAN}Auto-scaling to $WORKER_COUNT worker(s) based on $ready_count available task(s)${NC}"
+            # Auto-scale: min(default, ready_count)
+            if [ "$ready_count" -gt 0 ]; then
+                if [ "$ready_count" -lt "$WORKER_COUNT" ]; then
+                    WORKER_COUNT="$ready_count"
+                    echo -e "${CYAN}Detected $ready_count task(s), scaling to $WORKER_COUNT worker(s)${NC}"
+                else
+                    echo -e "${CYAN}Detected $ready_count task(s), using $WORKER_COUNT worker(s)${NC}"
+                fi
+            else
+                echo -e "${DIM}No beads tasks found, using default $WORKER_COUNT worker(s)${NC}"
             fi
         else
             # Warn if user requested more workers than tasks
             if [ "$ready_count" -gt 0 ] && [ "$WORKER_COUNT" -gt "$ready_count" ]; then
                 echo -e "${YELLOW}Warning: $WORKER_COUNT workers requested but only $ready_count task(s) available${NC}"
                 echo -e "${DIM}Some workers may be idle. Consider: vamp swarm -w $ready_count${NC}"
+            elif [ "$ready_count" -gt 0 ]; then
+                echo -e "${CYAN}Detected $ready_count task(s)${NC}"
             fi
         fi
     fi
