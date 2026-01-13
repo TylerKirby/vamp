@@ -26,6 +26,14 @@ vamp killall            # Kill all sessions
 
 # Project initialization
 vamp init               # Creates .git, beads, CLAUDE.md template
+
+# Swarm mode (parallel Claude instances)
+vamp swarm              # Start with 4 workers (default)
+vamp swarm -w 2         # Start with N workers (1-8)
+vamp swarm --status     # Show worker status and changes
+vamp swarm --merge      # Merge swarm branches to main
+vamp swarm --cleanup    # Remove worktrees (keep branches)
+vamp swarm --finish     # Merge + cleanup + delete branches
 ```
 
 No build or test commands - this is a bash-only project.
@@ -42,6 +50,7 @@ No build or test commands - this is a bash-only project.
 **Tmux Windows:**
 - Window 0 "main": 5-pane layout with Claude Code, shell, yazi, htop, and usage checker
 - Window 1 "beads": beads issue viewer (`bv` if installed, simple dashboard fallback)
+- Window 2 "swarm": grid of Claude instances (when swarm mode active)
 
 **Main Window Panes:**
 - Pane 0: Claude Code (top left, 75%) - main work area
@@ -155,6 +164,82 @@ The bottom-right pane contains a Claude instance dedicated to checking session l
 - Cost estimates
 
 This helps you know when you're approaching session limits before context compaction occurs.
+
+## Swarm Mode
+
+Swarm mode enables running multiple Claude Code instances in parallel, each working on separate tasks with git worktree isolation.
+
+### Architecture
+
+**Git Worktrees:**
+- Each worker gets its own directory: `.vamp-workers/worker-1`, `.vamp-workers/worker-2`, etc.
+- Each directory is a git worktree with its own branch: `swarm/worker-1`, `swarm/worker-2`, etc.
+- Changes are isolated until explicitly merged back to main
+
+**Tmux Layout:**
+- Swarm creates a new window (Window 2) with a grid of panes
+- Grid adapts to worker count: 2 workers = 2x1, 4 workers = 2x2, 6 workers = 3x2, etc.
+- Each pane runs an independent Claude Code instance
+
+**Beads Coordination:**
+- Workers share the same beads database via git sync
+- Each worker claims issues with `bd update <id> --status=in_progress`
+- Prevents duplicate work across workers
+
+### Swarm Workflow
+
+**Starting a swarm:**
+```bash
+cd ~/Projects/my-app
+bd ready                    # Check available work
+vamp swarm -w 3             # Start 3 parallel workers
+```
+
+**Worker initialization:**
+- Each worker starts in its worktree directory
+- Runs `bd ready` to show available issues
+- Starts Claude Code ready to work
+
+**During work:**
+```bash
+# In each worker pane:
+bd update <id> --status=in_progress  # Claim an issue
+# ... Claude works on the task ...
+git add . && git commit -m "..."      # Commit to worker branch
+bd close <id>                          # Mark complete
+```
+
+**Monitoring progress:**
+```bash
+vamp swarm --status         # Shows each worker's branch and commits
+```
+
+**Finishing:**
+```bash
+vamp swarm --merge          # Merge all branches to main (interactive)
+vamp swarm --cleanup        # Remove worktrees, keep branches
+vamp swarm --finish         # Full cleanup: merge + cleanup + delete branches
+```
+
+### Swarm Shell Aliases
+
+| Alias | Command | Description |
+|-------|---------|-------------|
+| `vs` | `vamp swarm` | Start swarm (4 workers) |
+| `vss` | `vamp swarm --status` | Check swarm status |
+| `vsf` | `vamp swarm --finish` | Finish and cleanup |
+
+### Conflict Resolution
+
+If a merge fails due to conflicts:
+1. Resolve conflicts manually in the main worktree
+2. Run `git commit` to complete the merge
+3. Continue with remaining branches
+
+Workers modifying the same files will create merge conflicts. Best practices:
+- Assign workers to different areas of the codebase
+- Use beads to coordinate work assignment
+- Commit frequently with small changes
 
 ## Tmux Session Settings
 

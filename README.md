@@ -14,6 +14,7 @@ Terminal-native development environment for Claude Code with beads integration f
 - **Beads integration** for persistent task/context management
 - **Beads window** with `bv` (beads_viewer) - Kanban, graph, insights, live reload
 - **Session persistence** - detach and reattach anytime
+- **Swarm mode** - run multiple Claude instances in parallel with git worktree isolation
 
 ## Layout
 
@@ -252,6 +253,81 @@ standup               # Git status + ready tasks
 ```bash
 eod                   # Checkpoint prompt + status
 ```
+
+## Swarm Mode
+
+Swarm mode runs multiple Claude Code instances in parallel, each in its own isolated git worktree. Perfect for tackling multiple beads issues simultaneously.
+
+### How It Works
+
+1. **Git Worktrees** - Each worker gets its own directory with a dedicated branch (`swarm/worker-1`, `swarm/worker-2`, etc.)
+2. **Beads Coordination** - Workers use beads to claim and track work, avoiding conflicts
+3. **Isolated Changes** - Each worker's changes stay on its branch until merged
+4. **Easy Cleanup** - Merge all branches back to main when done
+
+### Swarm Commands
+
+```bash
+# Start swarm
+vamp swarm              # 4 workers (default)
+vamp swarm -w 2         # Custom worker count (1-8)
+
+# Monitor progress
+vamp swarm --status     # Show worker branches and changes
+
+# Finish up
+vamp swarm --merge      # Merge branches to main
+vamp swarm --cleanup    # Remove worktrees (keep branches)
+vamp swarm --finish     # Merge + cleanup + delete branches
+```
+
+### Swarm Workflow
+
+```bash
+# 1. Start with issues ready to work
+cd ~/Projects/my-app
+bd ready                # Check available work
+
+# 2. Launch swarm
+vamp swarm -w 3         # Start 3 workers
+
+# 3. Each worker claims an issue
+# Worker 1: bd update <id> --status=in_progress
+# Worker 2: bd update <id> --status=in_progress
+# Worker 3: bd update <id> --status=in_progress
+
+# 4. Workers complete work on their branches
+# Each commits to: swarm/worker-1, swarm/worker-2, etc.
+
+# 5. Check progress
+vamp swarm --status
+
+# 6. Merge when done
+vamp swarm --finish     # Merge all branches, cleanup
+```
+
+### Swarm Layout
+
+```
+Window 2: swarm
++------------+------------+
+|  Worker 1  |  Worker 2  |
+|  (branch   |  (branch   |
+|   swarm/   |   swarm/   |
+|   worker-1)|   worker-2)|
++------------+------------+
+|  Worker 3  |  Worker 4  |
++------------+------------+
+```
+
+Navigate with `Ctrl-b + arrows`, zoom with `Ctrl-b + z`.
+
+### Swarm Best Practices
+
+- **Claim issues first** - Run `bd update <id> --status=in_progress` to avoid duplicate work
+- **Commit frequently** - Keep changes small and atomic
+- **Check status** - Run `vamp swarm --status` periodically to track progress
+- **Handle conflicts** - If merge fails, resolve manually and continue with `git commit`
 
 ## Project Structure
 
