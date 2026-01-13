@@ -769,39 +769,70 @@ init_swarm_workers() {
     local session="$1"
     local count="${2:-4}"
     local project_dir="${3:-$(pwd)}"
+    local task_ids="$4"  # Newline-separated list of task IDs
     local worktree_base="$project_dir/$SWARM_DIR"
+
+    # Convert task IDs to array
+    local -a tasks=()
+    if [ -n "$task_ids" ]; then
+        while IFS= read -r line; do
+            [ -n "$line" ] && tasks+=("$line")
+        done <<< "$task_ids"
+    fi
 
     for ((i = 1; i <= count; i++)); do
         local pane_idx=$((i - 1))
         local worktree="$worktree_base/worker-$i"
         local branch="swarm/worker-$i"
 
+        # Get assigned task for this worker (0-indexed)
+        local assigned_task="${tasks[$((i-1))]:-}"
+
         if [ -d "$worktree" ]; then
             # Change to worktree directory
             tmux send-keys -t "$session:swarm.$pane_idx" "cd '$worktree' && clear" Enter
 
-            # Show worker info
-            tmux send-keys -t "$session:swarm.$pane_idx" "echo '🐝 Worker $i ($branch)'" Enter
-
-            # Run bd ready if beads is available
-            if command -v bd &>/dev/null; then
-                tmux send-keys -t "$session:swarm.$pane_idx" "bd ready" Enter
+            # Show worker info and assigned task
+            if [ -n "$assigned_task" ]; then
+                tmux send-keys -t "$session:swarm.$pane_idx" "echo '🐝 Worker $i ($branch) → Task: $assigned_task'" Enter
+            else
+                tmux send-keys -t "$session:swarm.$pane_idx" "echo '🐝 Worker $i ($branch) → No task assigned'" Enter
             fi
 
-            # Write detailed instructions to file
-            cat > "$worktree/.swarm-prompt" << PROMPT_EOF
+            # Show the assigned task details if available
+            if [ -n "$assigned_task" ] && command -v bd &>/dev/null; then
+                tmux send-keys -t "$session:swarm.$pane_idx" "bd show $assigned_task" Enter
+            fi
+
+            # Write instructions with specific task assignment
+            if [ -n "$assigned_task" ]; then
+                cat > "$worktree/.swarm-prompt" << PROMPT_EOF
 SWARM WORKER $i - Branch: $branch
+YOUR ASSIGNED TASK: $assigned_task
+
 Worktree: $worktree (ONLY edit files here)
 Forbidden: $project_dir (DO NOT touch)
 
-Pick ONE task from bd ready output above:
-1. Claim: bd update <task-id> --status=in_progress
-2. Implement it
+WORKFLOW:
+1. Claim YOUR task: bd update $assigned_task --status=in_progress
+2. Implement the task (see bd show output above)
 3. Commit: git add . && git commit -m "description"
-4. Close: bd close <task-id>
+4. Close: bd close $assigned_task
 PROMPT_EOF
-            # Start Claude with simple prompt - it will see bd ready output and can read .swarm-prompt
-            tmux send-keys -t "$session:swarm.$pane_idx" "$CLAUDE_CMD 'Read .swarm-prompt for instructions, then pick ONE task from the bd ready output above and implement it.'" Enter
+                tmux send-keys -t "$session:swarm.$pane_idx" "$CLAUDE_CMD 'You are assigned task $assigned_task. Read .swarm-prompt then claim and implement your assigned task.'" Enter
+            else
+                # No task assigned - worker will be idle
+                cat > "$worktree/.swarm-prompt" << PROMPT_EOF
+SWARM WORKER $i - Branch: $branch
+NO TASK ASSIGNED - All tasks claimed by other workers.
+
+You can either:
+1. Wait for new tasks: bd ready
+2. Help with code review
+3. Exit: /exit
+PROMPT_EOF
+                tmux send-keys -t "$session:swarm.$pane_idx" "$CLAUDE_CMD 'No task assigned to you. Read .swarm-prompt for options.'" Enter
+            fi
         else
             tmux send-keys -t "$session:swarm.$pane_idx" "echo 'Worktree not found: $worktree'" Enter
         fi
@@ -1280,9 +1311,14 @@ start_swarm() {
         esac
     done
 
-    # Auto-scale workers based on available tasks (only when starting swarm, not for other actions)
+    # Auto-scale workers and get task assignments (only when starting swarm, not for other actions)
+    local TASK_IDS=""
     if [ -z "$ACTION" ] && command -v bd &>/dev/null && command -v jq &>/dev/null; then
-        local ready_count=$(bd ready --json 2>/dev/null | jq length 2>/dev/null || echo "0")
+        local ready_json=$(bd ready --json 2>/dev/null || echo "[]")
+        local ready_count=$(echo "$ready_json" | jq length 2>/dev/null || echo "0")
+
+        # Extract task IDs for assignment (one per line)
+        TASK_IDS=$(echo "$ready_json" | jq -r '.[].id' 2>/dev/null || echo "")
 
         if [ -z "$EXPLICIT_WORKERS" ]; then
             # Auto-scale: min(default, ready_count)
@@ -1387,9 +1423,9 @@ start_swarm() {
     echo -e "${CYAN}Creating swarm window...${NC}"
     create_swarm_window "$SESSION_NAME" "$WORKER_COUNT" "$PROJECT_DIR"
 
-    # Initialize workers
+    # Initialize workers with task assignments
     echo -e "${CYAN}Initializing workers...${NC}"
-    init_swarm_workers "$SESSION_NAME" "$WORKER_COUNT" "$PROJECT_DIR"
+    init_swarm_workers "$SESSION_NAME" "$WORKER_COUNT" "$PROJECT_DIR" "$TASK_IDS"
 
     echo ""
     echo -e "${GREEN}Swarm started!${NC}"
