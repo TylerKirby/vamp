@@ -9,10 +9,10 @@ Terminal-native development environment for Claude Code with beads integration f
 - **One command** launches full dev environment
 - **Mouse support** for scrolling, pane selection, and resizing
 - **File browser** (yazi) for project navigation
-- **System monitor** for resource tracking
-- **Claude monitor** window showing usage and beads status
+- **System monitor** (htop) for resource tracking
+- **Usage checker** pane for monitoring Claude session limits via `/usage`
 - **Beads integration** for persistent task/context management
-- **Git window** with lazygit
+- **Beads window** with `bv` (beads_viewer) - Kanban, graph, insights, live reload
 - **Session persistence** - detach and reattach anytime
 
 ## Layout
@@ -21,15 +21,17 @@ Terminal-native development environment for Claude Code with beads integration f
 +------------------------+--------------+
 |                        |              |
 |     Claude Code        |  File Viewer |
-|     (main work)        |   (yazi)     |
-|                        +--------------+
-+------------------------+              |
-|   Shell / Beads        |   Monitor    |
-|                        |   (htop)     |
-+------------------------+--------------+
+|       (75%)            |   (yazi)     |
+|                        +-------+------+
++------------------------+  htop | usage|
+|   Shell (25%)          |       |checker
++------------------------+-------+------+
 
-Window 0: main    Window 1: git    Window 2: claude monitor
+Window 0: main          Window 1: beads (bv viewer)
 ```
+
+- **Shell pane** runs `bd ready` on startup if beads is detected, then available for any commands
+- **Usage checker** is a Claude instance for running `/usage` to check session limits
 
 ## Install
 
@@ -53,8 +55,11 @@ source ~/.zshrc
 
 **Recommended (installed automatically on macOS):**
 ```bash
-brew install yazi htop lazygit fzf jq
+brew install yazi htop fzf jq
 brew tap steveyegge/beads && brew install beads
+
+# beads_viewer (bv) - rich TUI for beads
+curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh | bash
 ```
 
 ## Usage
@@ -92,11 +97,24 @@ vamp init
 | `Ctrl-b` + `d` | Detach session |
 | `Ctrl-b` + `[` | Scroll mode |
 | `Ctrl-b` + `0` | Main window |
-| `Ctrl-b` + `1` | Git window |
-| `Ctrl-b` + `2` | Claude monitor |
+| `Ctrl-b` + `1` | Beads window (`bv` viewer) |
 | Mouse scroll | Scroll pane content |
 | Mouse click | Select pane |
 | Mouse drag border | Resize pane |
+
+### Beads Viewer (`bv`) Keys
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move down / up |
+| `o` / `c` / `r` / `a` | Filter: Open / Closed / Ready / All |
+| `/` | Fuzzy search |
+| `b` | Kanban board view |
+| `i` | Insights dashboard |
+| `g` | Dependency graph |
+| `h` | History & git correlation |
+| `?` | Help overlay |
+| `q` | Quit |
 
 ## Shell Shortcuts
 
@@ -117,10 +135,15 @@ After install, these shortcuts are available:
 |---------|--------|
 | `bds` | Show ready tasks |
 | `bdl` | List all tasks |
+| `bdip` | In-progress tasks |
+| `bdb` | Blocked tasks |
 | `bdn <title>` | Create new task |
 | `bdp <title>` | Create P0 task |
 | `bdcp <id> <notes>` | Checkpoint task |
 | `bdd <id>` | Close task |
+| `bdpr` | Prime context for Claude |
+| `bdsy` | Sync beads with git |
+| `bdco` | Compact (memory decay) |
 
 ### Claude Code
 | Command | Action |
@@ -133,6 +156,8 @@ After install, these shortcuts are available:
 ### Workflow
 | Command | Action |
 |---------|--------|
+| `ss` | Session start (prime + status) |
+| `se` | Session end (sync + status) |
 | `standup` | Morning status check |
 | `eod` | End of day checkpoint |
 
@@ -156,44 +181,76 @@ export VAMP_PROJECTS_DIR="$HOME/Projects"
 
 ## Workflow
 
+### First-Time Setup
+
+```bash
+# Install beads hooks for Claude Code (run once globally)
+vamp setup
+
+# Restart Claude Code for hooks to take effect
+```
+
 ### Starting a Session
 
 ```bash
 cd ~/Projects/my-app
-vamp
+vamp                  # Launches tmux environment
+ss                    # Prime beads context, show ready tasks
+```
+
+The `ss` command (session start) runs `bd prime` which loads all your beads context into Claude's memory. Claude now knows about all your tasks, dependencies, and progress.
+
+### During Work
+
+```bash
+# Check what's available
+bds                   # Ready tasks (no blockers)
+bdip                  # In-progress tasks
+
+# Claim a task
+bd update <id> --status=in_progress
+
+# ... work with Claude Code ...
+
+# Checkpoint progress (before context compaction)
+bdcp <id> "Implemented auth, need tests"
+
+# Close completed work
+bdd <id>
+```
+
+**Claude Code Integration:**
+- Ask Claude "What should I work on?" - it checks `bd ready`
+- Tell Claude "I finished the auth flow" - it can run `bd close`
+- Hooks auto-run `bd prime` on session start and before compaction
+
+### End of Session
+
+```bash
+se                    # Sync beads with git, show status
+# Ctrl-b d to detach (session keeps running)
+```
+
+The `se` command (session end) runs `bd sync` to push your beads changes to the git remote.
+
+### Resuming Later
+
+```bash
+va my-app             # Reattach to tmux session
+ss                    # Prime context again
+# Claude instantly knows where you left off
 ```
 
 ### Morning Routine
 
 ```bash
-vamp attach my-app    # or just: va my-app
-standup               # see what's ready
-```
-
-### During Work
-
-```bash
-# In Claude Code, it knows about beads:
-# "What should I work on?" -> checks bd ready
-# "I finished the auth flow" -> can update beads
-
-# Checkpoint before context runs out:
-bdcp auth-123 "Implemented JWT refresh, need to add tests"
+standup               # Git status + ready tasks
 ```
 
 ### End of Day
 
 ```bash
-eod                   # checkpoint in-progress work
-# Ctrl-b d to detach
-```
-
-### Resume Later
-
-```bash
-va my-app
-# Claude: "What was I working on?"
-# It checks beads and knows the full context
+eod                   # Checkpoint prompt + status
 ```
 
 ## Project Structure
