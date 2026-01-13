@@ -59,10 +59,11 @@ ${YELLOW}USAGE:${NC}
     vamp help              Show this help
 
 ${YELLOW}SWARM MODE:${NC}
-    vamp swarm             Start swarm with 4 Claude workers
-    vamp swarm -w N        Start with N workers (2-8)
+    vamp swarm             Start swarm (auto-scales to task count)
+    vamp swarm -w N        Start with exactly N workers (1-8)
     vamp swarm --status    Show status of swarm workers
-    vamp swarm --cleanup   Merge branches and cleanup worktrees
+    vamp swarm --cleanup   Remove worktrees (keep branches)
+    vamp swarm --merge     Merge swarm branches to main
     vamp swarm --finish    Full cleanup (merge + delete branches)
 
 ${YELLOW}EXAMPLES:${NC}
@@ -305,8 +306,8 @@ create_worktrees() {
 
     # Add to .gitignore if not already
     if ! grep -q "^$SWARM_DIR" "$project_dir/.gitignore" 2>/dev/null; then
-        echo -e "\n# Vamp swarm worktrees\n$SWARM_DIR/" >> "$project_dir/.gitignore"
-        echo -e "  ${GREEN}✓${NC} Added $SWARM_DIR/ to .gitignore"
+        echo -e "\n# Vamp swarm worktrees\n$SWARM_DIR/\n.vamp-worker" >> "$project_dir/.gitignore"
+        echo -e "  ${GREEN}✓${NC} Added $SWARM_DIR/ and .vamp-worker to .gitignore"
     fi
 
     echo -e "${CYAN}Creating $count swarm worktrees from $base_ref...${NC}"
@@ -323,6 +324,20 @@ create_worktrees() {
         # Create worktree
         if git -C "$project_dir" worktree add "$worktree" "$branch" 2>/dev/null; then
             echo -e "  ${GREEN}✓${NC} worker-$i → $branch"
+
+            # Create context file for Claude to reference
+            cat > "$worktree/.vamp-worker" << EOF
+# Vamp Swarm Worker Context
+# This file helps Claude Code understand its isolated workspace
+
+WORKER_NUMBER=$i
+WORKER_BRANCH=$branch
+WORKTREE_PATH=$worktree
+MAIN_PROJECT_PATH=$project_dir
+
+# IMPORTANT: All file operations must stay within WORKTREE_PATH
+# NEVER edit files in MAIN_PROJECT_PATH
+EOF
         else
             echo -e "  ${RED}✗${NC} Failed to create worker-$i"
         fi
@@ -337,6 +352,7 @@ create_worktrees() {
 cleanup_worktrees() {
     local project_dir="${1:-$(pwd)}"
     local delete_branches="${2:-}"  # pass "branches" to also delete branches
+    local auto_confirm="${3:-}"     # pass "yes" to skip confirmation
 
     local worktree_base="$project_dir/$SWARM_DIR"
 
@@ -371,8 +387,10 @@ cleanup_worktrees() {
     done
 
     echo ""
-    read -p "Remove these worktrees? [y/N] " confirm
-    [[ ! "$confirm" =~ ^[Yy]$ ]] && return 1
+    if [ "$auto_confirm" != "yes" ]; then
+        read -p "Remove these worktrees? [y/N] " confirm
+        [[ ! "$confirm" =~ ^[Yy]$ ]] && return 1
+    fi
 
     # Remove worktrees
     for wt in $worktrees; do
@@ -635,6 +653,7 @@ swarm_finish() {
     local project_dir="${1:-$(pwd)}"
     local delete_branches="${2:-}"
     local close_window="${3:-}"
+    local auto_confirm="${4:-}"
 
     echo -e "${CYAN}═══ Swarm Finish Workflow ═══${NC}"
     echo ""
@@ -645,16 +664,21 @@ swarm_finish() {
     # Ask about merging
     local worktrees=$(ls -d "$project_dir/$SWARM_DIR"/worker-* 2>/dev/null)
     if [ -n "$worktrees" ]; then
-        read -p "Merge swarm branches before cleanup? [Y/n] " merge_first
-        if [[ ! "$merge_first" =~ ^[Nn]$ ]]; then
-            swarm_merge "$project_dir"
+        if [ "$auto_confirm" = "yes" ]; then
+            # Auto-merge when --yes is specified
+            swarm_merge "$project_dir" "auto"
+        else
+            read -p "Merge swarm branches before cleanup? [Y/n] " merge_first
+            if [[ ! "$merge_first" =~ ^[Nn]$ ]]; then
+                swarm_merge "$project_dir"
+            fi
         fi
     fi
 
     echo ""
 
     # Cleanup worktrees
-    cleanup_worktrees "$project_dir" "$delete_branches"
+    cleanup_worktrees "$project_dir" "$delete_branches" "$auto_confirm"
 
     # Close swarm window if requested
     if [ "$close_window" = "yes" ]; then
@@ -758,16 +782,24 @@ init_swarm_workers() {
             # Pass initial prompt as argument to provide worker context
             local swarm_prompt="You are SWARM WORKER $i on branch '$branch'.
 
-CRITICAL: You are working in an ISOLATED GIT WORKTREE at:
-  $worktree
+⚠️ CRITICAL ISOLATION REQUIREMENT ⚠️
 
-RULES:
-1. ONLY edit files in THIS directory ($worktree)
-2. NEVER cd to or edit files in the main project directory
-3. Use 'bd ready' to find available work
-4. Claim a task with 'bd update <id> --status=in_progress'
-5. When done, use 'bd close <id>' to mark complete
-6. Your changes will be merged to main later
+You are working in an ISOLATED GIT WORKTREE. Your workspace:
+  ✓ YOUR DIRECTORY: $worktree
+  ✗ FORBIDDEN: $project_dir (main project - DO NOT EDIT)
+
+STRICT RULES:
+1. ALL file operations MUST use paths starting with: $worktree
+2. NEVER use paths starting with: $project_dir
+3. NEVER cd outside your worktree directory
+4. If unsure, run 'pwd' to verify you're in: $worktree
+5. Your branch '$branch' is isolated - changes merge to main later
+
+WORKFLOW:
+1. Run 'bd ready' to find available work
+2. Claim ONE task: 'bd update <id> --status=in_progress'
+3. Complete the work in THIS worktree only
+4. Close task: 'bd close <id>'
 
 Run 'bd ready' now and pick ONE task to work on."
 
@@ -1170,18 +1202,22 @@ start_session() {
 start_swarm() {
     local PROJECT_DIR="$(pwd)"
     local WORKER_COUNT=4
+    local EXPLICIT_WORKERS=""  # Track if -w was explicitly provided
     local ACTION=""
     local CLOSE_WINDOW=""
+    local AUTO_CONFIRM=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -w|--workers)
                 WORKER_COUNT="$2"
+                EXPLICIT_WORKERS="yes"
                 shift 2
                 ;;
             --workers=*)
                 WORKER_COUNT="${1#*=}"
+                EXPLICIT_WORKERS="yes"
                 shift
                 ;;
             --status)
@@ -1208,18 +1244,30 @@ start_swarm() {
                 CLOSE_WINDOW="yes"
                 shift
                 ;;
+            -y|--yes)
+                AUTO_CONFIRM="yes"
+                shift
+                ;;
             -h|--help)
                 echo -e "${CYAN}  ♪♫ vamp swarm 🐝 ♫♪${NC}"
                 echo -e "  ${DIM}Multi-instance Claude Code with git worktrees${NC}"
                 echo ""
                 echo -e "${YELLOW}USAGE:${NC}"
-                echo "    vamp swarm                 Start swarm (default: 4 workers)"
-                echo "    vamp swarm -w N            Start with N workers"
+                echo "    vamp swarm                 Start swarm (auto-scales to available tasks)"
+                echo "    vamp swarm -w N            Start with exactly N workers (1-8)"
                 echo "    vamp swarm --status        Show swarm status"
                 echo "    vamp swarm --cleanup       Cleanup worktrees (keep branches)"
                 echo "    vamp swarm --merge         Merge swarm branches to main"
                 echo "    vamp swarm --finish        Merge + cleanup (keep window open)"
                 echo "    vamp swarm --finish --close  Merge + cleanup + close swarm window"
+                echo ""
+                echo -e "${YELLOW}OPTIONS:${NC}"
+                echo "    -w, --workers N            Set exact worker count (disables auto-scaling)"
+                echo "    -y, --yes                  Skip confirmation prompts (non-interactive)"
+                echo ""
+                echo -e "${YELLOW}AUTO-SCALING:${NC}"
+                echo "    By default, swarm auto-scales workers to match available beads tasks."
+                echo "    Use -w to override with a specific count (warns if workers > tasks)."
                 echo ""
                 echo -e "${YELLOW}WORKFLOW:${NC}"
                 echo "    1. vamp swarm              Create worktrees, start workers"
@@ -1233,6 +1281,25 @@ start_swarm() {
                 ;;
         esac
     done
+
+    # Auto-scale workers based on available tasks (only when starting swarm, not for other actions)
+    if [ -z "$ACTION" ] && command -v bd &>/dev/null && command -v jq &>/dev/null; then
+        local ready_count=$(bd ready --json 2>/dev/null | jq length 2>/dev/null || echo "0")
+
+        if [ -z "$EXPLICIT_WORKERS" ]; then
+            # Auto-scale: min(4, ready_count), minimum of 1
+            if [ "$ready_count" -gt 0 ] && [ "$ready_count" -lt "$WORKER_COUNT" ]; then
+                WORKER_COUNT="$ready_count"
+                echo -e "${CYAN}Auto-scaling to $WORKER_COUNT worker(s) based on $ready_count available task(s)${NC}"
+            fi
+        else
+            # Warn if user requested more workers than tasks
+            if [ "$ready_count" -gt 0 ] && [ "$WORKER_COUNT" -gt "$ready_count" ]; then
+                echo -e "${YELLOW}Warning: $WORKER_COUNT workers requested but only $ready_count task(s) available${NC}"
+                echo -e "${DIM}Some workers may be idle. Consider: vamp swarm -w $ready_count${NC}"
+            fi
+        fi
+    fi
 
     # Validate worker count
     if ! [[ "$WORKER_COUNT" =~ ^[0-9]+$ ]] || [ "$WORKER_COUNT" -lt 1 ] || [ "$WORKER_COUNT" -gt 8 ]; then
@@ -1248,19 +1315,23 @@ start_swarm() {
             return 0
             ;;
         cleanup)
-            cleanup_worktrees "$PROJECT_DIR"
+            cleanup_worktrees "$PROJECT_DIR" "" "$AUTO_CONFIRM"
             return 0
             ;;
         merge)
-            swarm_merge "$PROJECT_DIR"
+            if [ "$AUTO_CONFIRM" = "yes" ]; then
+                swarm_merge "$PROJECT_DIR" "auto"
+            else
+                swarm_merge "$PROJECT_DIR"
+            fi
             return 0
             ;;
         finish)
-            swarm_finish "$PROJECT_DIR" "" "$CLOSE_WINDOW"
+            swarm_finish "$PROJECT_DIR" "" "$CLOSE_WINDOW" "$AUTO_CONFIRM"
             return 0
             ;;
         finish-branches)
-            swarm_finish "$PROJECT_DIR" "branches" "$CLOSE_WINDOW"
+            swarm_finish "$PROJECT_DIR" "branches" "$CLOSE_WINDOW" "$AUTO_CONFIRM"
             return 0
             ;;
     esac

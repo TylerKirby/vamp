@@ -186,6 +186,13 @@ Swarm mode enables running multiple Claude Code instances in parallel, each work
 - Each worker claims issues with `bd update <id> --status=in_progress`
 - Prevents duplicate work across workers
 
+**Worker Isolation:**
+- Each worker receives a context prompt with explicit workspace boundaries
+- A `.vamp-worker` file is created in each worktree with isolation metadata
+- Workers are instructed to ONLY edit files within their worktree path
+- The main project directory is explicitly marked as forbidden
+- Workers can run `pwd` or `cat .vamp-worker` to verify their workspace
+
 ### Swarm Workflow
 
 **Starting a swarm:**
