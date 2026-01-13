@@ -160,8 +160,21 @@ init_project() {
         if [ ! -d ".beads" ] && [ ! -f ".beads.jsonl" ]; then
             bd init
             echo -e "  ${GREEN}✓${NC} Initialized beads"
+
+            # CRITICAL: Configure dedicated sync branch to prevent conflicts with code commits
+            # Without this, bd sync commits to main and can revert your code changes!
+            bd config set sync.branch beads-sync 2>/dev/null
+            echo -e "  ${GREEN}✓${NC} Configured beads sync branch (beads-sync)"
         else
             echo -e "  ${DIM}○${NC} Beads already initialized"
+
+            # Check if sync branch is configured, warn if not
+            local sync_branch=$(bd config get sync.branch 2>/dev/null | grep -v "not set" || true)
+            if [ -z "$sync_branch" ]; then
+                echo -e "  ${YELLOW}⚠${NC} Beads sync branch not set!"
+                echo -e "      Run: bd config set sync.branch beads-sync"
+                echo -e "      This prevents bd sync from reverting your code commits."
+            fi
         fi
 
         # Install git hooks
