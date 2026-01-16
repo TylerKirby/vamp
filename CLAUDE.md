@@ -34,6 +34,9 @@ vamp swarm --status     # Show worker status and changes
 vamp swarm --merge      # Merge swarm branches to main
 vamp swarm --cleanup    # Remove worktrees (keep branches)
 vamp swarm --finish     # Merge + cleanup + delete branches
+
+# Diagnostics
+vamp doctor             # Check setup and show recommendations
 ```
 
 ## Testing

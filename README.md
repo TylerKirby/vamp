@@ -87,6 +87,9 @@ vamp kill my-app
 # Initialize new project
 cd ~/Projects/new-thing
 vamp init
+
+# Check setup health
+vamp doctor
 ```
 
 ## Keybindings

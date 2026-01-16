@@ -71,6 +71,7 @@ ${YELLOW}USAGE:${NC}
     vamp killall           Kill all vamp sessions
     vamp init              Initialize project with beads + CLAUDE.md
     vamp setup             Install beads hooks for Claude Code + git
+    vamp doctor            Validate setup and show recommendations
     vamp help              Show this help
 
 ${YELLOW}SWARM MODE:${NC}
@@ -251,7 +252,29 @@ EOF
 }
 
 setup_beads() {
+    local claude_md_only=""
+
+    # Parse arguments
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --claude-md)
+                claude_md_only="yes"
+                shift
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+
+    # If --claude-md flag, only setup CLAUDE.md
+    if [ "$claude_md_only" = "yes" ]; then
+        setup_claude_md
+        return 0
+    fi
+
     echo -e "${CYAN}Setting up beads integration...${NC}"
+    echo ""
 
     if ! command -v bd &> /dev/null; then
         echo -e "  ${RED}✗${NC} beads not installed"
@@ -273,9 +296,301 @@ setup_beads() {
     fi
 
     echo ""
+
+    # Setup global CLAUDE.md
+    setup_claude_md
+
+    echo ""
     echo -e "${GREEN}Beads integration complete!${NC}"
     echo -e "  Restart Claude Code for hooks to take effect."
-    echo -e "  Run 'bd setup claude --check' to verify."
+    echo -e "  Run 'vamp doctor' to verify setup."
+}
+
+# Install or update global CLAUDE.md with beads workflow
+setup_claude_md() {
+    local global_claude_md="$HOME/.claude/CLAUDE.md"
+    local claude_dir="$HOME/.claude"
+
+    echo -e "${CYAN}Setting up global CLAUDE.md...${NC}"
+
+    # Ensure ~/.claude directory exists
+    mkdir -p "$claude_dir"
+
+    if [ -f "$global_claude_md" ]; then
+        # File exists - check if beads section is present
+        if grep -q "Beads Workflow" "$global_claude_md" 2>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} Global CLAUDE.md already has beads workflow"
+            return 0
+        else
+            # Ask to append
+            echo -e "  ${YELLOW}○${NC} Global CLAUDE.md exists but missing beads workflow"
+            read -p "  Append beads workflow section? [Y/n] " append_confirm
+            if [[ ! "$append_confirm" =~ ^[Nn]$ ]]; then
+                echo "" >> "$global_claude_md"
+                write_beads_section >> "$global_claude_md"
+                echo -e "  ${GREEN}✓${NC} Appended beads workflow to CLAUDE.md"
+            else
+                echo -e "  ${DIM}○${NC} Skipped"
+            fi
+        fi
+    else
+        # Create new file with header and beads section
+        cat > "$global_claude_md" << 'HEADER'
+# Global Claude Code Instructions
+
+These instructions apply to all projects.
+
+HEADER
+        write_beads_section >> "$global_claude_md"
+        echo -e "  ${GREEN}✓${NC} Created $global_claude_md with beads workflow"
+    fi
+}
+
+# Write beads workflow template to stdout (used by setup_claude_md)
+write_beads_section() {
+    cat << 'BEADS_EOF'
+## Beads Workflow (Issue Tracking)
+
+When working in a project with a `.beads/` directory, follow these practices for issue tracking and task management.
+
+### Creating a Beads Project
+
+To initialize beads in a new project:
+```bash
+bd init                    # Initialize beads in current directory
+```
+
+**CRITICAL: Configure a dedicated sync branch immediately after init:**
+```bash
+bd config set sync.branch beads-sync
+```
+
+⚠️ **Without this, `bd sync` commits to your main branch and CAN REVERT YOUR CODE CHANGES!** This has caused lost work multiple times. Always verify sync branch is set:
+```bash
+bd config get sync.branch  # Should NOT say "not set"
+```
+
+This creates a `.beads/` directory with the issue database. The `.beads/` directory is gitignored - beads syncs via a separate branch (`beads-sync`).
+
+### Core Workflow
+
+**Starting a session:**
+```bash
+bd ready                   # Show issues with no blockers
+bd list --status=open      # All open issues
+bd show <id>               # Detailed view with dependencies
+```
+
+**Working on issues:**
+```bash
+bd update <id> --status=in_progress  # Claim work
+bd close <id>                         # Mark complete
+bd close <id1> <id2> ...              # Close multiple at once
+```
+
+**Creating issues:**
+```bash
+bd create --title="..." --type=task|bug|feature --priority=2
+# Priority: 0-4 (0=critical, 4=backlog). NOT "high"/"medium"/"low"
+```
+
+**Dependencies:**
+```bash
+bd dep add <issue> <depends-on>  # issue depends on depends-on
+bd blocked                        # Show blocked issues
+```
+
+### Session Close Protocol
+
+Before ending a session, ALWAYS run:
+```bash
+git status              # Check changes
+git add <files>         # Stage code changes
+bd sync                 # Sync beads
+git commit -m "..."     # Commit code
+bd sync                 # Sync any new beads changes
+git push                # Push to remote
+```
+
+### When to Use Beads vs TodoWrite
+
+- **Use Beads** for: Multi-session work, issues with dependencies, discovered work that needs tracking, bugs, features
+- **Use TodoWrite** for: Simple single-session task execution, step-by-step progress within a session
+
+When in doubt, prefer beads - persistence you don't need beats lost context.
+
+## Recommended Permissions
+
+Add to `.claude/settings.local.json` for smoother workflows:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(bd:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ]
+  }
+}
+```
+
+These are safe across all projects:
+- `bd:*` - Beads issue tracking commands
+- `git add/commit/status/diff/log` - Standard git operations (reversible, scoped to repo)
+BEADS_EOF
+}
+
+# Validate vamp and beads setup
+doctor() {
+    echo -e "${CYAN}vamp doctor${NC} - Checking setup..."
+    echo ""
+
+    local all_passed=true
+    local warnings=()
+    local fixes=()
+
+    # Check tmux
+    if command -v tmux &>/dev/null; then
+        local tmux_version=$(tmux -V 2>/dev/null | head -1)
+        echo -e "  ${GREEN}✓${NC} tmux installed ($tmux_version)"
+    else
+        echo -e "  ${RED}✗${NC} tmux not installed"
+        fixes+=("brew install tmux  # or apt install tmux")
+        all_passed=false
+    fi
+
+    # Check Claude Code CLI
+    if command -v claude &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} Claude Code CLI installed"
+    else
+        echo -e "  ${RED}✗${NC} Claude Code CLI not installed"
+        fixes+=("npm install -g @anthropic-ai/claude-code")
+        all_passed=false
+    fi
+
+    # Check beads
+    if command -v bd &>/dev/null; then
+        local beads_version=$(bd --version 2>/dev/null | head -1)
+        echo -e "  ${GREEN}✓${NC} beads installed ($beads_version)"
+    else
+        echo -e "  ${YELLOW}○${NC} beads not installed (optional)"
+        warnings+=("brew tap steveyegge/beads && brew install beads")
+    fi
+
+    # Check beads_viewer (bv)
+    if command -v bv &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} beads_viewer (bv) installed"
+    else
+        echo -e "  ${YELLOW}○${NC} beads_viewer (bv) not installed (optional)"
+        warnings+=("curl -fsSL https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh | bash")
+    fi
+
+    # Check Claude Code hooks
+    local hooks_dir="$HOME/.claude/hooks"
+    if [ -d "$hooks_dir" ] && [ -n "$(ls -A "$hooks_dir" 2>/dev/null)" ]; then
+        local hook_count=$(ls -1 "$hooks_dir"/*.sh 2>/dev/null | wc -l | tr -d ' ')
+        echo -e "  ${GREEN}✓${NC} Claude Code hooks installed ($hook_count hooks)"
+    else
+        echo -e "  ${RED}✗${NC} Claude Code hooks not installed"
+        fixes+=("vamp setup  # installs beads hooks for Claude Code")
+        all_passed=false
+    fi
+
+    # Check global CLAUDE.md
+    local global_claude_md="$HOME/.claude/CLAUDE.md"
+    if [ -f "$global_claude_md" ]; then
+        if grep -q "beads\|bd " "$global_claude_md" 2>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} Global CLAUDE.md has beads workflow"
+        else
+            echo -e "  ${YELLOW}○${NC} Global CLAUDE.md exists but missing beads workflow"
+            warnings+=("Add beads workflow to $global_claude_md")
+        fi
+    else
+        echo -e "  ${YELLOW}○${NC} Global CLAUDE.md not found"
+        warnings+=("Create $global_claude_md with beads workflow instructions")
+    fi
+
+    # Check recommended permissions in settings.local.json
+    local settings_file="$HOME/.claude/settings.local.json"
+    if [ -f "$settings_file" ]; then
+        if grep -q '"Bash(bd:\*)"' "$settings_file" 2>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} beads permissions configured"
+        else
+            echo -e "  ${YELLOW}○${NC} beads permissions not in settings.local.json"
+            warnings+=("Add '\"Bash(bd:*)\"' to permissions.allow in $settings_file")
+        fi
+    else
+        echo -e "  ${YELLOW}○${NC} settings.local.json not found"
+        warnings+=("Create $settings_file with recommended permissions")
+    fi
+
+    # Check beads sync branch (if in a beads project)
+    if [ -d ".beads" ] || [ -f ".beads.jsonl" ]; then
+        local sync_branch=$(bd config get sync.branch 2>/dev/null | grep -v "not set" || true)
+        if [ -n "$sync_branch" ]; then
+            echo -e "  ${GREEN}✓${NC} beads sync branch configured ($sync_branch)"
+        else
+            echo -e "  ${RED}✗${NC} beads sync branch not configured"
+            fixes+=("bd config set sync.branch beads-sync  # CRITICAL: prevents code reversion")
+            all_passed=false
+        fi
+    fi
+
+    # Check yazi/file viewer
+    if command -v yazi &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} yazi file viewer installed"
+    elif command -v lf &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} lf file viewer installed"
+    elif command -v ranger &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} ranger file viewer installed"
+    else
+        echo -e "  ${YELLOW}○${NC} No file viewer installed (yazi recommended)"
+        warnings+=("brew install yazi")
+    fi
+
+    # Check htop/monitor
+    if command -v htop &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} htop installed"
+    elif command -v btop &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} btop installed"
+    else
+        echo -e "  ${YELLOW}○${NC} No system monitor installed (htop recommended)"
+        warnings+=("brew install htop")
+    fi
+
+    echo ""
+
+    # Show fixes if any
+    if [ ${#fixes[@]} -gt 0 ]; then
+        echo -e "${RED}Required fixes:${NC}"
+        for fix in "${fixes[@]}"; do
+            echo -e "  → $fix"
+        done
+        echo ""
+    fi
+
+    # Show warnings if any
+    if [ ${#warnings[@]} -gt 0 ]; then
+        echo -e "${YELLOW}Recommendations:${NC}"
+        for warning in "${warnings[@]}"; do
+            echo -e "  → $warning"
+        done
+        echo ""
+    fi
+
+    # Summary
+    if [ "$all_passed" = true ] && [ ${#warnings[@]} -eq 0 ]; then
+        echo -e "${GREEN}All checks passed!${NC} ✨"
+    elif [ "$all_passed" = true ]; then
+        echo -e "${GREEN}Core setup OK${NC}, with ${#warnings[@]} optional recommendation(s)"
+    else
+        echo -e "${RED}Setup incomplete${NC} - run the fixes above"
+        return 1
+    fi
 }
 
 # ============================================
@@ -1561,6 +1876,9 @@ start_swarm() {
 # Main entry point
 # ============================================
 
+# Only run main when executed, not sourced (allows sourcing for tests)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+
 case "${1:-}" in
     help|--help|-h)
         show_help
@@ -1581,7 +1899,11 @@ case "${1:-}" in
         init_project
         ;;
     setup)
-        setup_beads
+        shift
+        setup_beads "$@"
+        ;;
+    doctor)
+        doctor
         ;;
     swarm)
         shift
@@ -1594,3 +1916,5 @@ case "${1:-}" in
         start_session "$1"
         ;;
 esac
+
+fi  # end of sourcing guard
