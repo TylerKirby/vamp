@@ -36,7 +36,23 @@ vamp swarm --cleanup    # Remove worktrees (keep branches)
 vamp swarm --finish     # Merge + cleanup + delete branches
 ```
 
-No build or test commands - this is a bash-only project.
+## Testing
+
+Run tests using bats-core:
+
+```bash
+# Run all tests
+./tests/run_tests.sh
+
+# Run specific category
+./tests/run_tests.sh unit
+./tests/run_tests.sh integration
+
+# Run specific file
+./tests/run_tests.sh tests/unit/args_test.bats
+```
+
+Test files are in `tests/unit/` and `tests/integration/`. CI runs automatically via GitHub Actions.
 
 ## Architecture
 

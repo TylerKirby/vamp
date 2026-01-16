@@ -329,6 +329,71 @@ Navigate with `Ctrl-b + arrows`, zoom with `Ctrl-b + z`.
 - **Check status** - Run `vamp swarm --status` periodically to track progress
 - **Handle conflicts** - If merge fails, resolve manually and continue with `git commit`
 
+## Testing
+
+Vamp uses [bats-core](https://github.com/bats-core/bats-core) for testing.
+
+### Running Tests
+
+```bash
+# Run all tests
+./tests/run_tests.sh
+
+# Run only unit tests
+./tests/run_tests.sh unit
+
+# Run only integration tests
+./tests/run_tests.sh integration
+
+# Run specific test file
+./tests/run_tests.sh tests/unit/args_test.bats
+
+# Verbose output
+./tests/run_tests.sh --verbose
+```
+
+### Test Structure
+
+```
+tests/
+├── bats/                    # bats-core submodules
+│   ├── bats-core/
+│   ├── bats-support/
+│   └── bats-assert/
+├── helpers/
+│   ├── test_helper.bash     # Shared utilities
+│   ├── mock_git.bash        # Git mock utilities
+│   └── mock_tmux.bash       # Tmux mock utilities
+├── unit/
+│   ├── smoke_test.bats      # Basic sanity checks
+│   └── args_test.bats       # Argument parsing tests
+└── integration/
+    └── swarm_merge_test.bats # Swarm merge workflow tests
+```
+
+### Writing Tests
+
+Tests are written using bats syntax:
+
+```bash
+@test "description of what is being tested" {
+    run_vamp some-command
+    assert_success
+    assert_output --partial "expected output"
+}
+```
+
+Use the helpers in `test_helper.bash`:
+- `setup_temp_dir` / `teardown_temp_dir` - Temp directory management
+- `setup_test_repo` / `teardown_test_repo` - Git repo setup
+- `run_vamp` - Run vamp with arguments
+- `assert_file_exists` / `assert_dir_exists` - File assertions
+- `load_git_mocks` / `load_tmux_mocks` - Mock utilities
+
+### CI
+
+Tests run automatically on push and PR via GitHub Actions. See `.github/workflows/test.yml`.
+
 ## Project Structure
 
 ```

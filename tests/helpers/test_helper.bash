@@ -141,6 +141,22 @@ assert_branch_exists() {
 # Mock Helpers
 # ============================================
 
+# Load git mock utilities
+load_git_mocks() {
+    source "$HELPER_DIR/mock_git.bash"
+}
+
+# Load tmux mock utilities
+load_tmux_mocks() {
+    source "$HELPER_DIR/mock_tmux.bash"
+}
+
+# Load all mock utilities
+load_all_mocks() {
+    load_git_mocks
+    load_tmux_mocks
+}
+
 # Create a mock command that records calls
 # Usage: create_mock "command_name" "response"
 create_mock() {
