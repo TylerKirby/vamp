@@ -1,2 +1,0 @@
-- Show cc usage in the monitor pane
-- Be able to spawn multiple cc instances in a single vamp project
