@@ -175,7 +175,48 @@ kill_all_sessions() {
 init_project() {
     local name=$(basename "$(pwd)")
     echo -e "${CYAN}Initializing project: $name${NC}"
-    
+    echo ""
+
+    # ============================================
+    # Check global setup first
+    # ============================================
+    local setup_needed=false
+    local hooks_dir="$HOME/.claude/hooks"
+    local global_claude_md="$HOME/.claude/CLAUDE.md"
+
+    # Check Claude Code hooks
+    if [ ! -d "$hooks_dir" ] || [ -z "$(ls -A "$hooks_dir" 2>/dev/null)" ]; then
+        echo -e "  ${YELLOW}⚠${NC} Claude Code hooks not installed"
+        setup_needed=true
+    fi
+
+    # Check global CLAUDE.md
+    if [ ! -f "$global_claude_md" ]; then
+        echo -e "  ${YELLOW}⚠${NC} Global CLAUDE.md not found"
+        setup_needed=true
+    elif ! grep -q "Beads Workflow" "$global_claude_md" 2>/dev/null; then
+        echo -e "  ${YELLOW}⚠${NC} Global CLAUDE.md missing beads workflow"
+        setup_needed=true
+    fi
+
+    # Offer to run vamp setup if needed
+    if [ "$setup_needed" = true ]; then
+        echo ""
+        echo -e "  Global setup incomplete. Run ${CYAN}vamp setup${NC} for full integration."
+        read -p "  Run vamp setup now? [Y/n] " setup_confirm
+        if [[ ! "$setup_confirm" =~ ^[Nn]$ ]]; then
+            echo ""
+            setup_beads
+            echo ""
+            echo -e "${CYAN}Continuing with project initialization...${NC}"
+        fi
+        echo ""
+    fi
+
+    # ============================================
+    # Project initialization
+    # ============================================
+
     # Git
     if [ ! -d ".git" ]; then
         git init
@@ -206,12 +247,6 @@ init_project() {
 
         # Install git hooks
         bd hooks install 2>/dev/null && echo -e "  ${GREEN}✓${NC} Git hooks installed"
-
-        # Check Claude integration
-        if ! bd setup claude --check &>/dev/null; then
-            echo -e "  ${YELLOW}?${NC} Claude Code hooks not installed"
-            echo -e "      Run 'vamp setup' to install globally"
-        fi
     else
         echo -e "  ${YELLOW}○${NC} Beads not installed (brew tap steveyegge/beads && brew install beads)"
     fi

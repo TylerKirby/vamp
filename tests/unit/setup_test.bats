@@ -240,3 +240,67 @@ EOF
     run_vamp setup --deps <<< "n"
     assert_output --partial "beads_viewer"
 }
+
+# ============================================
+# init_project validation Tests
+# ============================================
+
+@test "init: checks for global setup" {
+    source "$VAMP_BIN"
+
+    # Ensure hooks dir doesn't exist in test HOME
+    rm -rf "$HOME/.claude/hooks"
+
+    # Run init with "n" to skip setup
+    cd "$TEST_TEMP_DIR"
+    mkdir test-project && cd test-project
+
+    run init_project <<< "n"
+    assert_output --partial "Claude Code hooks not installed"
+}
+
+@test "init: checks for global CLAUDE.md" {
+    source "$VAMP_BIN"
+
+    # Ensure CLAUDE.md doesn't exist in test HOME
+    rm -f "$HOME/.claude/CLAUDE.md"
+    # Create hooks dir so hooks check passes
+    mkdir -p "$HOME/.claude/hooks"
+    touch "$HOME/.claude/hooks/test.sh"
+
+    cd "$TEST_TEMP_DIR"
+    mkdir test-project2 && cd test-project2
+
+    run init_project <<< "n"
+    assert_output --partial "Global CLAUDE.md not found"
+}
+
+@test "init: offers to run vamp setup when needed" {
+    source "$VAMP_BIN"
+
+    rm -rf "$HOME/.claude"
+
+    cd "$TEST_TEMP_DIR"
+    mkdir test-project3 && cd test-project3
+
+    run init_project <<< "n"
+    assert_output --partial "Global setup incomplete"
+}
+
+@test "init: continues with project init after setup check" {
+    source "$VAMP_BIN"
+
+    # Setup complete scenario
+    mkdir -p "$HOME/.claude/hooks"
+    touch "$HOME/.claude/hooks/test.sh"
+    mkdir -p "$HOME/.claude"
+    echo "## Beads Workflow" > "$HOME/.claude/CLAUDE.md"
+
+    cd "$TEST_TEMP_DIR"
+    mkdir test-project4 && cd test-project4
+    git init
+
+    run init_project
+    # Should proceed to project init (check for CLAUDE.md creation)
+    assert_output --partial "Initializing project"
+}
