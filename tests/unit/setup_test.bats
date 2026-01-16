@@ -210,3 +210,33 @@ EOF
     # Should run permissions setup only (may fail due to prompts but shows correct output)
     assert_output --partial "Setting up Claude Code permissions"
 }
+
+# ============================================
+# install_dependencies Tests
+# ============================================
+
+@test "install_dependencies: --deps flag works" {
+    run_vamp setup --deps <<< "n"
+    assert_output --partial "Installing vamp dependencies"
+}
+
+@test "install_dependencies: shows OS detection" {
+    run_vamp setup --deps <<< "n"
+    # Should show either macOS or Linux
+    [[ "$output" == *"macOS"* ]] || [[ "$output" == *"Linux"* ]]
+}
+
+@test "install_dependencies: checks for tmux" {
+    run_vamp setup --deps <<< "n"
+    assert_output --partial "tmux"
+}
+
+@test "install_dependencies: checks for beads" {
+    run_vamp setup --deps <<< "n"
+    assert_output --partial "Beads"
+}
+
+@test "install_dependencies: checks for beads_viewer" {
+    run_vamp setup --deps <<< "n"
+    assert_output --partial "beads_viewer"
+}

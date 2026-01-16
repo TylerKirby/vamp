@@ -254,6 +254,7 @@ EOF
 setup_beads() {
     local claude_md_only=""
     local permissions_only=""
+    local deps_only=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -264,6 +265,10 @@ setup_beads() {
                 ;;
             --permissions)
                 permissions_only="yes"
+                shift
+                ;;
+            --deps)
+                deps_only="yes"
                 shift
                 ;;
             *)
@@ -281,6 +286,12 @@ setup_beads() {
     # If --permissions flag, only setup permissions
     if [ "$permissions_only" = "yes" ]; then
         setup_permissions
+        return 0
+    fi
+
+    # If --deps flag, only install dependencies
+    if [ "$deps_only" = "yes" ]; then
+        install_dependencies
         return 0
     fi
 
@@ -552,6 +563,149 @@ PERMS_EOF
             echo -e "  ${DIM}○${NC} Skipped"
         fi
     fi
+}
+
+# Install vamp dependencies (beads, bv, etc.)
+install_dependencies() {
+    echo -e "${CYAN}Installing vamp dependencies...${NC}"
+    echo ""
+
+    # Detect OS and package manager
+    local os_name pkg_cmd
+    case "$(uname -s)" in
+        Darwin*) os_name="macOS"; pkg_cmd="brew install" ;;
+        Linux*)
+            os_name="Linux"
+            command -v apt &>/dev/null && pkg_cmd="sudo apt install -y"
+            command -v dnf &>/dev/null && pkg_cmd="sudo dnf install -y"
+            command -v pacman &>/dev/null && pkg_cmd="sudo pacman -S"
+            ;;
+        *) echo -e "  ${RED}Unsupported OS${NC}"; return 1 ;;
+    esac
+
+    echo -e "${BLUE}OS:${NC} $os_name"
+    echo ""
+
+    # Helper: check if command exists
+    check_cmd() {
+        if command -v "$1" &>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} $1 installed"
+            return 0
+        else
+            return 1
+        fi
+    }
+
+    # ============================================
+    # Required dependencies
+    # ============================================
+    echo -e "${BLUE}Required:${NC}"
+
+    if ! check_cmd tmux; then
+        echo -e "  ${YELLOW}○${NC} tmux not found"
+        read -p "  Install tmux? [Y/n] " install_confirm
+        if [[ ! "$install_confirm" =~ ^[Nn]$ ]]; then
+            $pkg_cmd tmux && echo -e "  ${GREEN}✓${NC} tmux installed"
+        fi
+    fi
+
+    # ============================================
+    # Recommended tools
+    # ============================================
+    echo ""
+    echo -e "${BLUE}Recommended tools:${NC}"
+
+    check_cmd yazi || echo -e "  ${YELLOW}○${NC} yazi - Install: $pkg_cmd yazi"
+    check_cmd htop || echo -e "  ${YELLOW}○${NC} htop - Install: $pkg_cmd htop"
+    check_cmd fzf || echo -e "  ${YELLOW}○${NC} fzf - Install: $pkg_cmd fzf"
+    check_cmd jq || echo -e "  ${YELLOW}○${NC} jq - Install: $pkg_cmd jq"
+
+    # ============================================
+    # Beads (AI-native issue tracking)
+    # ============================================
+    echo ""
+    echo -e "${BLUE}Beads (AI-native issue tracking):${NC}"
+
+    if check_cmd bd; then
+        local beads_version=$(bd --version 2>/dev/null | head -1)
+        echo -e "    $beads_version"
+    else
+        echo -e "  ${YELLOW}○${NC} beads not found"
+
+        if [[ "$os_name" == "macOS" ]]; then
+            echo -e "    Recommended: brew tap steveyegge/beads && brew install beads"
+            read -p "  Install beads via brew? [Y/n] " install_confirm
+            if [[ ! "$install_confirm" =~ ^[Nn]$ ]]; then
+                (brew tap steveyegge/beads && brew install beads) && \
+                    echo -e "  ${GREEN}✓${NC} beads installed" || \
+                    echo -e "  ${RED}✗${NC} Installation failed"
+            fi
+        else
+            # Linux - try cargo
+            if command -v cargo &>/dev/null; then
+                echo -e "    Install via: cargo install beads"
+                read -p "  Install beads via cargo? [Y/n] " install_confirm
+                if [[ ! "$install_confirm" =~ ^[Nn]$ ]]; then
+                    cargo install beads && \
+                        echo -e "  ${GREEN}✓${NC} beads installed" || \
+                        echo -e "  ${RED}✗${NC} Installation failed"
+                fi
+            else
+                echo -e "  ${YELLOW}!${NC} cargo not found - see rustup.rs to install Rust"
+                echo -e "    Then: cargo install beads"
+            fi
+        fi
+    fi
+
+    # ============================================
+    # beads_viewer (bv) - TUI for beads
+    # ============================================
+    echo ""
+    echo -e "${BLUE}beads_viewer (bv) - TUI for beads:${NC}"
+
+    if check_cmd bv; then
+        true
+    else
+        echo -e "  ${YELLOW}○${NC} beads_viewer not found"
+
+        if command -v cargo &>/dev/null; then
+            echo -e "    Install via: cargo install beads_viewer"
+            read -p "  Install beads_viewer via cargo? [Y/n] " install_confirm
+            if [[ ! "$install_confirm" =~ ^[Nn]$ ]]; then
+                cargo install beads_viewer && \
+                    echo -e "  ${GREEN}✓${NC} beads_viewer installed" || \
+                    echo -e "  ${RED}✗${NC} Installation failed"
+            fi
+        else
+            # Check if we can install rustup
+            echo -e "  ${YELLOW}!${NC} cargo not found"
+            echo ""
+            echo -e "  ${BLUE}Rust/Cargo needed for beads_viewer${NC}"
+            echo -e "    Install Rust: curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh"
+            echo -e "    Then: cargo install beads_viewer"
+
+            read -p "  Install Rust via rustup.rs? [y/N] " rust_confirm
+            if [[ "$rust_confirm" =~ ^[Yy]$ ]]; then
+                curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+                # Source cargo environment
+                source "$HOME/.cargo/env" 2>/dev/null || true
+
+                if command -v cargo &>/dev/null; then
+                    echo -e "  ${GREEN}✓${NC} Rust installed"
+                    read -p "  Now install beads_viewer? [Y/n] " bv_confirm
+                    if [[ ! "$bv_confirm" =~ ^[Nn]$ ]]; then
+                        cargo install beads_viewer && \
+                            echo -e "  ${GREEN}✓${NC} beads_viewer installed"
+                    fi
+                fi
+            fi
+        fi
+    fi
+
+    echo ""
+    echo -e "${GREEN}Dependency check complete!${NC}"
+    echo ""
+    echo -e "Run ${CYAN}vamp doctor${NC} to verify setup"
 }
 
 # Validate vamp and beads setup
