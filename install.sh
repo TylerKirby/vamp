@@ -160,6 +160,29 @@ if ! grep -q "vamp-utils.sh" "$RC_FILE" 2>/dev/null; then
 fi
 
 # ============================================
+# Configure Claude Code integration
+# ============================================
+
+echo ""
+echo -e "${BLUE}Configure Claude Code integration...${NC}"
+echo ""
+echo -e "vamp setup will configure:"
+echo -e "  • Claude Code hooks (session start, pre-compaction)"
+echo -e "  • Global CLAUDE.md template with beads workflow"
+echo -e "  • Recommended permissions for beads and git commands"
+echo ""
+read -p "Run vamp setup now? [Y/n] " setup_confirm
+if [[ ! "$setup_confirm" =~ ^[Nn]$ ]]; then
+    echo ""
+    # Source the new PATH so vamp is available
+    export PATH="$BIN_DIR:$PATH"
+    "$BIN_DIR/vamp" setup
+else
+    echo ""
+    echo -e "${YELLOW}Skipped. Remember to run 'vamp setup' later for full integration.${NC}"
+fi
+
+# ============================================
 # Done
 # ============================================
 
@@ -178,7 +201,9 @@ echo ""
 echo -e "Initialize a project:"
 echo -e "  ${CYAN}vamp init${NC}"
 echo ""
+echo -e "Check setup health:"
+echo -e "  ${CYAN}vamp doctor${NC}"
+echo ""
 echo -e "Get help:"
 echo -e "  ${CYAN}vamp help${NC}"
-echo -e "  ${CYAN}vamp-help${NC}  (after sourcing utils)"
 echo ""
