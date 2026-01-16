@@ -253,12 +253,17 @@ EOF
 
 setup_beads() {
     local claude_md_only=""
+    local permissions_only=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
         case "$1" in
             --claude-md)
                 claude_md_only="yes"
+                shift
+                ;;
+            --permissions)
+                permissions_only="yes"
                 shift
                 ;;
             *)
@@ -270,6 +275,12 @@ setup_beads() {
     # If --claude-md flag, only setup CLAUDE.md
     if [ "$claude_md_only" = "yes" ]; then
         setup_claude_md
+        return 0
+    fi
+
+    # If --permissions flag, only setup permissions
+    if [ "$permissions_only" = "yes" ]; then
+        setup_permissions
         return 0
     fi
 
@@ -299,6 +310,11 @@ setup_beads() {
 
     # Setup global CLAUDE.md
     setup_claude_md
+
+    echo ""
+
+    # Setup recommended permissions
+    setup_permissions
 
     echo ""
     echo -e "${GREEN}Beads integration complete!${NC}"
@@ -442,6 +458,100 @@ These are safe across all projects:
 - `bd:*` - Beads issue tracking commands
 - `git add/commit/status/diff/log` - Standard git operations (reversible, scoped to repo)
 BEADS_EOF
+}
+
+# Setup recommended Claude Code permissions
+setup_permissions() {
+    local settings_file="$HOME/.claude/settings.local.json"
+    local claude_dir="$HOME/.claude"
+
+    echo -e "${CYAN}Setting up Claude Code permissions...${NC}"
+
+    # Ensure ~/.claude directory exists
+    mkdir -p "$claude_dir"
+
+    # Define recommended permissions
+    local recommended_permissions=(
+        "Bash(bd:*)"
+        "Bash(git add:*)"
+        "Bash(git commit:*)"
+        "Bash(git status:*)"
+        "Bash(git diff:*)"
+        "Bash(git log:*)"
+        "Bash(docker:*)"
+        "Bash(docker-compose:*)"
+    )
+
+    if [ -f "$settings_file" ]; then
+        # File exists - check what's there and merge
+        if ! command -v jq &>/dev/null; then
+            echo -e "  ${YELLOW}○${NC} jq not installed, cannot merge permissions"
+            echo -e "    Install: brew install jq"
+            echo -e "    Then run: vamp setup --permissions"
+            return 0
+        fi
+
+        # Get existing allow list
+        local existing_perms
+        existing_perms=$(jq -r '.permissions.allow // [] | .[]' "$settings_file" 2>/dev/null)
+
+        # Check what's missing
+        local missing_perms=()
+        for perm in "${recommended_permissions[@]}"; do
+            if ! echo "$existing_perms" | grep -qF "$perm"; then
+                missing_perms+=("$perm")
+            fi
+        done
+
+        if [ ${#missing_perms[@]} -eq 0 ]; then
+            echo -e "  ${GREEN}✓${NC} All recommended permissions already configured"
+            return 0
+        fi
+
+        # Ask to add missing permissions
+        echo -e "  ${YELLOW}○${NC} Missing ${#missing_perms[@]} recommended permissions"
+        echo -e "    Would add: ${missing_perms[*]:0:3}${missing_perms[3]:+...}"
+        read -p "  Add missing permissions? [Y/n] " add_confirm
+        if [[ ! "$add_confirm" =~ ^[Nn]$ ]]; then
+            # Merge permissions using jq
+            local all_perms
+            all_perms=$(printf '%s\n' "${recommended_permissions[@]}")
+
+            # Create merged JSON
+            jq --argjson new_perms "$(printf '%s\n' "${recommended_permissions[@]}" | jq -R . | jq -s .)" '
+                .permissions.allow = ((.permissions.allow // []) + $new_perms | unique)
+            ' "$settings_file" > "${settings_file}.tmp" && mv "${settings_file}.tmp" "$settings_file"
+
+            echo -e "  ${GREEN}✓${NC} Added missing permissions to settings.local.json"
+        else
+            echo -e "  ${DIM}○${NC} Skipped"
+        fi
+    else
+        # Create new settings file
+        echo -e "  ${YELLOW}○${NC} settings.local.json not found"
+        read -p "  Create with recommended permissions? [Y/n] " create_confirm
+        if [[ ! "$create_confirm" =~ ^[Nn]$ ]]; then
+            cat > "$settings_file" << 'PERMS_EOF'
+{
+  "permissions": {
+    "allow": [
+      "Bash(bd:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)"
+    ]
+  }
+}
+PERMS_EOF
+            echo -e "  ${GREEN}✓${NC} Created $settings_file with recommended permissions"
+        else
+            echo -e "  ${DIM}○${NC} Skipped"
+        fi
+    fi
 }
 
 # Validate vamp and beads setup

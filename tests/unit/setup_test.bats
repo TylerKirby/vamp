@@ -131,3 +131,82 @@ teardown() {
     assert_output --partial "setup"
     assert_output --partial "Install beads hooks"
 }
+
+# ============================================
+# setup_permissions Tests
+# ============================================
+
+@test "setup_permissions: creates settings.local.json when missing" {
+    source "$VAMP_BIN"
+
+    [ ! -f "$HOME/.claude/settings.local.json" ]
+
+    # Non-interactive - provide "y" via stdin
+    echo "y" | setup_permissions
+    [ -f "$HOME/.claude/settings.local.json" ]
+}
+
+@test "setup_permissions: new file includes all recommended permissions" {
+    source "$VAMP_BIN"
+
+    echo "y" | setup_permissions
+
+    # Check all recommended permissions are present
+    grep -q "Bash(bd:\*)" "$HOME/.claude/settings.local.json"
+    grep -q "Bash(git add:\*)" "$HOME/.claude/settings.local.json"
+    grep -q "Bash(docker:\*)" "$HOME/.claude/settings.local.json"
+}
+
+@test "setup_permissions: skips if all permissions present" {
+    source "$VAMP_BIN"
+
+    # Create file with all permissions
+    mkdir -p "$HOME/.claude"
+    cat > "$HOME/.claude/settings.local.json" << 'EOF'
+{
+  "permissions": {
+    "allow": [
+      "Bash(bd:*)",
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git status:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(docker:*)",
+      "Bash(docker-compose:*)"
+    ]
+  }
+}
+EOF
+
+    run setup_permissions
+    assert_success
+    assert_output --partial "All recommended permissions already configured"
+}
+
+@test "setup_permissions: detects missing permissions" {
+    source "$VAMP_BIN"
+
+    # Create file with only some permissions
+    mkdir -p "$HOME/.claude"
+    cat > "$HOME/.claude/settings.local.json" << 'EOF'
+{
+  "permissions": {
+    "allow": [
+      "Bash(bd:*)"
+    ]
+  }
+}
+EOF
+
+    run setup_permissions
+    # Will fail due to read prompt, but output should show missing count
+    assert_output --partial "Missing"
+    assert_output --partial "recommended permissions"
+}
+
+@test "setup_permissions: --permissions flag works" {
+    run_vamp setup --permissions <<< "n"
+    # Should run permissions setup only (may fail due to prompts but shows correct output)
+    assert_output --partial "Setting up Claude Code permissions"
+}
