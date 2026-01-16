@@ -30,6 +30,21 @@ NC='\033[0m'
 # Load config if exists
 [ -f "$HOME/.config/vamp/config" ] && source "$HOME/.config/vamp/config"
 
+# Default patterns for files to ignore when checking dirty state
+# These are common dev artifacts that shouldn't block merge operations
+# Override via VAMP_IGNORE_DIRTY env var (pipe-separated patterns)
+VAMP_IGNORE_DIRTY_DEFAULT="__pycache__|\.pyc$|\.swarm-prompt|\.gitignore|\.db$|\.beads/|\.coverage|\.log$|\.pytest_cache|node_modules|\.DS_Store|\.env\.local"
+VAMP_IGNORE_DIRTY="${VAMP_IGNORE_DIRTY:-$VAMP_IGNORE_DIRTY_DEFAULT}"
+
+# Filter out ignorable files from git status output
+# Usage: echo "$git_status" | filter_ignorable_dirty
+filter_ignorable_dirty() {
+    local pattern="$VAMP_IGNORE_DIRTY"
+    # Convert pipe-separated patterns to grep -v chain
+    # Filter both untracked (??) and modified (M/A/D) files matching patterns
+    grep -vE "($pattern)" 2>/dev/null || true
+}
+
 # ============================================
 # Subcommands
 # ============================================
@@ -543,11 +558,32 @@ swarm_status() {
     done
 }
 
+# Helper to restore stashed changes in worktrees
+_restore_stashes() {
+    local worktrees=("$@")
+    if [ ${#worktrees[@]} -eq 0 ]; then
+        return 0
+    fi
+
+    echo ""
+    echo -e "${CYAN}Restoring stashed changes...${NC}"
+    for wt in "${worktrees[@]}"; do
+        local wt_name=$(basename "$wt")
+        if git -C "$wt" stash pop 2>/dev/null; then
+            echo -e "  ${GREEN}✓${NC} Restored $wt_name"
+        else
+            echo -e "  ${YELLOW}⚠${NC} Failed to restore $wt_name (stash may conflict or be empty)"
+            echo -e "    ${DIM}Run 'git -C $wt stash list' to check${NC}"
+        fi
+    done
+}
+
 # Merge swarm branches back to main
 swarm_merge() {
     local project_dir="${1:-$(pwd)}"
     local auto_merge="${2:-}"  # pass "auto" for non-interactive
     local force_merge="${3:-}" # pass "yes" to merge despite uncommitted changes
+    local autostash="${4:-}"   # pass "yes" to stash dirty changes before merge
     local worktree_base="$project_dir/$SWARM_DIR"
 
     if [ ! -d "$worktree_base" ]; then
@@ -566,6 +602,28 @@ swarm_merge() {
     # First, show status
     swarm_status "$project_dir"
 
+    # Track stashed worktrees for later restore
+    local stashed_worktrees=()
+
+    # If autostash is enabled, stash dirty worktrees first
+    if [ "$autostash" = "yes" ]; then
+        for wt in $worktrees; do
+            local wt_dirty=$(git -C "$wt" status --porcelain 2>/dev/null | filter_ignorable_dirty)
+            if [ -n "$wt_dirty" ]; then
+                echo -e "${CYAN}Stashing changes in $(basename $wt)...${NC}"
+                if git -C "$wt" stash push -m "vamp-swarm-autostash" --include-untracked 2>/dev/null; then
+                    stashed_worktrees+=("$wt")
+                    echo -e "  ${GREEN}✓${NC} Stashed"
+                else
+                    echo -e "  ${YELLOW}⚠${NC} Failed to stash (continuing anyway)"
+                fi
+            fi
+        done
+        if [ ${#stashed_worktrees[@]} -gt 0 ]; then
+            echo ""
+        fi
+    fi
+
     # Collect branches with commits, tracking dirty state separately
     local branches_to_merge=()
     local dirty_branches=()
@@ -579,7 +637,7 @@ swarm_merge() {
         if [ "$ahead" -gt 0 ]; then
             ((total_with_commits++))
             # Check for uncommitted or untracked files
-            local wt_dirty=$(git -C "$wt" status --porcelain 2>/dev/null | grep -v "^?? __pycache__" | grep -v "^?? .*\.pyc" | grep -v "^?? \.swarm-prompt")
+            local wt_dirty=$(git -C "$wt" status --porcelain 2>/dev/null | filter_ignorable_dirty)
             if [ -n "$wt_dirty" ]; then
                 dirty_branches+=("$branch")
                 if [ "$force_merge" = "yes" ]; then
@@ -598,6 +656,8 @@ swarm_merge() {
     # Show summary of what we found
     if [ "$total_with_commits" -eq 0 ]; then
         echo -e "${DIM}No branches have commits to merge${NC}"
+        # Restore stashes if we stashed anything
+        _restore_stashes "${stashed_worktrees[@]}"
         return 0
     fi
 
@@ -609,7 +669,7 @@ swarm_merge() {
             echo "  - $branch"
         done
         echo ""
-        echo -e "${DIM}Use --force to merge these branches anyway (uncommitted changes stay in worktrees)${NC}"
+        echo -e "${DIM}Use --force to merge anyway, or --autostash to stash/restore changes${NC}"
     fi
 
     if [ ${#branches_to_merge[@]} -eq 0 ]; then
@@ -618,6 +678,9 @@ swarm_merge() {
         echo -e "${DIM}Options:${NC}"
         echo "  1. Commit or stash changes in each worktree"
         echo "  2. Use --force to merge anyway: vamp swarm --merge --force"
+        echo "  3. Use --autostash to auto-stash: vamp swarm --merge --autostash"
+        # Restore stashes if we stashed anything
+        _restore_stashes "${stashed_worktrees[@]}"
         return 0
     fi
 
@@ -681,6 +744,9 @@ swarm_merge() {
     echo ""
     echo -e "${GREEN}Merge complete:${NC} $merged succeeded, $failed failed"
 
+    # Restore stashes if we stashed anything
+    _restore_stashes "${stashed_worktrees[@]}"
+
     if [ "$merged" -gt 0 ]; then
         echo ""
         echo -e "${DIM}Next steps:${NC}"
@@ -697,6 +763,7 @@ swarm_finish() {
     local close_window="${3:-}"
     local auto_confirm="${4:-}"
     local force_merge="${5:-}"
+    local autostash="${6:-}"
 
     echo -e "${CYAN}═══ Swarm Finish Workflow ═══${NC}"
     echo ""
@@ -709,11 +776,11 @@ swarm_finish() {
     if [ -n "$worktrees" ]; then
         if [ "$auto_confirm" = "yes" ]; then
             # Auto-merge when --yes is specified
-            swarm_merge "$project_dir" "auto" "$force_merge"
+            swarm_merge "$project_dir" "auto" "$force_merge" "$autostash"
         else
             read -p "Merge swarm branches before cleanup? [Y/n] " merge_first
             if [[ ! "$merge_first" =~ ^[Nn]$ ]]; then
-                swarm_merge "$project_dir" "" "$force_merge"
+                swarm_merge "$project_dir" "" "$force_merge" "$autostash"
             fi
         fi
     fi
@@ -1269,6 +1336,7 @@ start_swarm() {
     local CLOSE_WINDOW=""
     local AUTO_CONFIRM=""
     local FORCE_MERGE=""
+    local AUTOSTASH=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -1311,6 +1379,10 @@ start_swarm() {
                 FORCE_MERGE="yes"
                 shift
                 ;;
+            --autostash)
+                AUTOSTASH="yes"
+                shift
+                ;;
             -y|--yes)
                 AUTO_CONFIRM="yes"
                 shift
@@ -1332,6 +1404,7 @@ start_swarm() {
                 echo "    -w, --workers N            Set exact worker count (disables auto-scaling)"
                 echo "    -y, --yes                  Skip confirmation prompts (non-interactive)"
                 echo "    --force                    Merge branches even if they have uncommitted changes"
+                echo "    --autostash                Stash uncommitted changes before merge, restore after"
                 echo ""
                 echo -e "${YELLOW}AUTO-SCALING:${NC}"
                 echo "    By default, swarm auto-scales workers to match available beads tasks."
@@ -1401,18 +1474,18 @@ start_swarm() {
             ;;
         merge)
             if [ "$AUTO_CONFIRM" = "yes" ]; then
-                swarm_merge "$PROJECT_DIR" "auto" "$FORCE_MERGE"
+                swarm_merge "$PROJECT_DIR" "auto" "$FORCE_MERGE" "$AUTOSTASH"
             else
-                swarm_merge "$PROJECT_DIR" "" "$FORCE_MERGE"
+                swarm_merge "$PROJECT_DIR" "" "$FORCE_MERGE" "$AUTOSTASH"
             fi
             return 0
             ;;
         finish)
-            swarm_finish "$PROJECT_DIR" "" "$CLOSE_WINDOW" "$AUTO_CONFIRM" "$FORCE_MERGE"
+            swarm_finish "$PROJECT_DIR" "" "$CLOSE_WINDOW" "$AUTO_CONFIRM" "$FORCE_MERGE" "$AUTOSTASH"
             return 0
             ;;
         finish-branches)
-            swarm_finish "$PROJECT_DIR" "branches" "$CLOSE_WINDOW" "$AUTO_CONFIRM" "$FORCE_MERGE"
+            swarm_finish "$PROJECT_DIR" "branches" "$CLOSE_WINDOW" "$AUTO_CONFIRM" "$FORCE_MERGE" "$AUTOSTASH"
             return 0
             ;;
     esac
