@@ -547,6 +547,7 @@ swarm_status() {
 swarm_merge() {
     local project_dir="${1:-$(pwd)}"
     local auto_merge="${2:-}"  # pass "auto" for non-interactive
+    local force_merge="${3:-}" # pass "yes" to merge despite uncommitted changes
     local worktree_base="$project_dir/$SWARM_DIR"
 
     if [ ! -d "$worktree_base" ]; then
@@ -565,27 +566,58 @@ swarm_merge() {
     # First, show status
     swarm_status "$project_dir"
 
-    # Collect branches with changes
+    # Collect branches with commits, tracking dirty state separately
     local branches_to_merge=()
+    local dirty_branches=()
+    local clean_branches=()
+    local total_with_commits=0
+
     for wt in $worktrees; do
         local branch=$(git -C "$wt" branch --show-current 2>/dev/null)
         local ahead=$(git -C "$wt" rev-list --count "$main_branch".."$branch" 2>/dev/null || echo "0")
 
         if [ "$ahead" -gt 0 ]; then
+            ((total_with_commits++))
             # Check for uncommitted or untracked files
             local wt_dirty=$(git -C "$wt" status --porcelain 2>/dev/null | grep -v "^?? __pycache__" | grep -v "^?? .*\.pyc" | grep -v "^?? \.swarm-prompt")
             if [ -n "$wt_dirty" ]; then
-                echo -e "${YELLOW}Warning: $(basename $wt) has uncommitted changes${NC}"
-                echo "$wt_dirty" | head -5 | sed 's/^/  /'
-                echo "  Commit or stash changes before merging"
-                continue
+                dirty_branches+=("$branch")
+                if [ "$force_merge" = "yes" ]; then
+                    # Force mode: include dirty branches with warning
+                    branches_to_merge+=("$branch")
+                    echo -e "${YELLOW}Warning: $(basename $wt) has uncommitted changes (will merge anyway with --force)${NC}"
+                    echo "$wt_dirty" | head -3 | sed 's/^/  /'
+                fi
+            else
+                clean_branches+=("$branch")
+                branches_to_merge+=("$branch")
             fi
-            branches_to_merge+=("$branch")
         fi
     done
 
+    # Show summary of what we found
+    if [ "$total_with_commits" -eq 0 ]; then
+        echo -e "${DIM}No branches have commits to merge${NC}"
+        return 0
+    fi
+
+    # If we have dirty branches and not forcing, show helpful message
+    if [ ${#dirty_branches[@]} -gt 0 ] && [ "$force_merge" != "yes" ]; then
+        echo ""
+        echo -e "${YELLOW}Skipped ${#dirty_branches[@]} branch(es) with uncommitted changes:${NC}"
+        for branch in "${dirty_branches[@]}"; do
+            echo "  - $branch"
+        done
+        echo ""
+        echo -e "${DIM}Use --force to merge these branches anyway (uncommitted changes stay in worktrees)${NC}"
+    fi
+
     if [ ${#branches_to_merge[@]} -eq 0 ]; then
-        echo -e "${DIM}No branches with changes to merge${NC}"
+        echo ""
+        echo -e "${YELLOW}$total_with_commits branch(es) have commits to merge, but all have uncommitted changes${NC}"
+        echo -e "${DIM}Options:${NC}"
+        echo "  1. Commit or stash changes in each worktree"
+        echo "  2. Use --force to merge anyway: vamp swarm --merge --force"
         return 0
     fi
 
@@ -664,6 +696,7 @@ swarm_finish() {
     local delete_branches="${2:-}"
     local close_window="${3:-}"
     local auto_confirm="${4:-}"
+    local force_merge="${5:-}"
 
     echo -e "${CYAN}═══ Swarm Finish Workflow ═══${NC}"
     echo ""
@@ -676,11 +709,11 @@ swarm_finish() {
     if [ -n "$worktrees" ]; then
         if [ "$auto_confirm" = "yes" ]; then
             # Auto-merge when --yes is specified
-            swarm_merge "$project_dir" "auto"
+            swarm_merge "$project_dir" "auto" "$force_merge"
         else
             read -p "Merge swarm branches before cleanup? [Y/n] " merge_first
             if [[ ! "$merge_first" =~ ^[Nn]$ ]]; then
-                swarm_merge "$project_dir"
+                swarm_merge "$project_dir" "" "$force_merge"
             fi
         fi
     fi
@@ -1235,6 +1268,7 @@ start_swarm() {
     local ACTION=""
     local CLOSE_WINDOW=""
     local AUTO_CONFIRM=""
+    local FORCE_MERGE=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -1273,6 +1307,10 @@ start_swarm() {
                 CLOSE_WINDOW="yes"
                 shift
                 ;;
+            --force)
+                FORCE_MERGE="yes"
+                shift
+                ;;
             -y|--yes)
                 AUTO_CONFIRM="yes"
                 shift
@@ -1293,6 +1331,7 @@ start_swarm() {
                 echo -e "${YELLOW}OPTIONS:${NC}"
                 echo "    -w, --workers N            Set exact worker count (disables auto-scaling)"
                 echo "    -y, --yes                  Skip confirmation prompts (non-interactive)"
+                echo "    --force                    Merge branches even if they have uncommitted changes"
                 echo ""
                 echo -e "${YELLOW}AUTO-SCALING:${NC}"
                 echo "    By default, swarm auto-scales workers to match available beads tasks."
@@ -1362,18 +1401,18 @@ start_swarm() {
             ;;
         merge)
             if [ "$AUTO_CONFIRM" = "yes" ]; then
-                swarm_merge "$PROJECT_DIR" "auto"
+                swarm_merge "$PROJECT_DIR" "auto" "$FORCE_MERGE"
             else
-                swarm_merge "$PROJECT_DIR"
+                swarm_merge "$PROJECT_DIR" "" "$FORCE_MERGE"
             fi
             return 0
             ;;
         finish)
-            swarm_finish "$PROJECT_DIR" "" "$CLOSE_WINDOW" "$AUTO_CONFIRM"
+            swarm_finish "$PROJECT_DIR" "" "$CLOSE_WINDOW" "$AUTO_CONFIRM" "$FORCE_MERGE"
             return 0
             ;;
         finish-branches)
-            swarm_finish "$PROJECT_DIR" "branches" "$CLOSE_WINDOW" "$AUTO_CONFIRM"
+            swarm_finish "$PROJECT_DIR" "branches" "$CLOSE_WINDOW" "$AUTO_CONFIRM" "$FORCE_MERGE"
             return 0
             ;;
     esac
