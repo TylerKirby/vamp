@@ -1,0 +1,58 @@
+# Dockerfile for testing vamp setup on Ubuntu
+#
+# Usage:
+#   docker build -t vamp-test-ubuntu -f tests/docker/Dockerfile.ubuntu .
+#   docker run --rm -it vamp-test-ubuntu
+#
+FROM ubuntu:24.04
+
+# Prevent interactive prompts during package installation
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install base dependencies
+RUN apt-get update && apt-get install -y \
+    git \
+    curl \
+    wget \
+    sudo \
+    tmux \
+    htop \
+    fzf \
+    jq \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create test user with sudo access
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Install Rust (for beads and beads_viewer)
+USER testuser
+WORKDIR /home/testuser
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/home/testuser/.cargo/bin:${PATH}"
+
+# Note: yazi requires special build process (yazi-build crate)
+# For testing purposes, we skip it - vamp works without yazi
+# If needed: cargo install --force yazi-build && cargo install yazi-fm yazi-cli
+
+# Create mock claude command (just needs to exist for testing)
+USER root
+RUN echo '#!/bin/bash' > /usr/local/bin/claude && \
+    echo 'echo "Mock Claude CLI v1.0.0"' >> /usr/local/bin/claude && \
+    echo 'if [[ "$1" == "--version" ]]; then echo "1.0.0"; fi' >> /usr/local/bin/claude && \
+    chmod +x /usr/local/bin/claude
+
+# Copy vamp source
+USER testuser
+WORKDIR /home/testuser
+COPY --chown=testuser:testuser . /home/testuser/vamp
+
+# Copy test scripts
+COPY --chown=testuser:testuser tests/scripts /home/testuser/tests
+
+# Set working directory
+WORKDIR /home/testuser/vamp
+
+# Default command runs test suite
+CMD ["/home/testuser/tests/run-tests.sh"]

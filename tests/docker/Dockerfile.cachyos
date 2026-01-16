@@ -1,0 +1,59 @@
+# Dockerfile for testing vamp setup on CachyOS
+#
+# CachyOS is based on Arch Linux with additional performance optimizations.
+# It uses the same package manager (pacman) but has its own repos.
+#
+# Note: There's no official CachyOS Docker image, so we use Arch as base
+# and note that CachyOS behavior should be similar (same pacman workflow).
+#
+# Usage:
+#   docker build -t vamp-test-cachyos -f tests/docker/Dockerfile.cachyos .
+#   docker run --rm -it vamp-test-cachyos
+#
+FROM archlinux:latest
+
+# Note: This is effectively an Arch test since CachyOS doesn't have
+# official Docker images. CachyOS uses pacman like Arch.
+# The main test is that pacman-based installation works.
+
+# Update and install base dependencies
+RUN pacman -Syu --noconfirm && \
+    pacman -S --noconfirm \
+    git \
+    curl \
+    wget \
+    sudo \
+    tmux \
+    htop \
+    fzf \
+    jq \
+    base-devel \
+    rust \
+    && pacman -Scc --noconfirm
+
+# Create test user with sudo access
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Install yazi (file manager)
+RUN pacman -S --noconfirm yazi && pacman -Scc --noconfirm
+
+# Create mock claude command (just needs to exist for testing)
+RUN echo '#!/bin/bash' > /usr/local/bin/claude && \
+    echo 'echo "Mock Claude CLI v1.0.0"' >> /usr/local/bin/claude && \
+    echo 'if [[ "$1" == "--version" ]]; then echo "1.0.0"; fi' >> /usr/local/bin/claude && \
+    chmod +x /usr/local/bin/claude
+
+# Copy vamp source
+USER testuser
+WORKDIR /home/testuser
+COPY --chown=testuser:testuser . /home/testuser/vamp
+
+# Copy test scripts
+COPY --chown=testuser:testuser tests/scripts /home/testuser/tests
+
+# Set working directory
+WORKDIR /home/testuser/vamp
+
+# Default command runs test suite
+CMD ["/home/testuser/tests/run-tests.sh"]

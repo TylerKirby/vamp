@@ -1,0 +1,49 @@
+# Dockerfile for testing vamp setup on Arch Linux
+#
+# Usage:
+#   docker build -t vamp-test-arch -f tests/docker/Dockerfile.arch .
+#   docker run --rm -it vamp-test-arch
+#
+FROM archlinux:latest
+
+# Update and install base dependencies
+RUN pacman -Syu --noconfirm && \
+    pacman -S --noconfirm \
+    git \
+    curl \
+    wget \
+    sudo \
+    tmux \
+    htop \
+    fzf \
+    jq \
+    base-devel \
+    rust \
+    && pacman -Scc --noconfirm
+
+# Create test user with sudo access
+RUN useradd -m -s /bin/bash testuser && \
+    echo "testuser ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers
+
+# Install yazi (file manager) - Arch has it in repos
+RUN pacman -S --noconfirm yazi && pacman -Scc --noconfirm
+
+# Create mock claude command (just needs to exist for testing)
+RUN echo '#!/bin/bash' > /usr/local/bin/claude && \
+    echo 'echo "Mock Claude CLI v1.0.0"' >> /usr/local/bin/claude && \
+    echo 'if [[ "$1" == "--version" ]]; then echo "1.0.0"; fi' >> /usr/local/bin/claude && \
+    chmod +x /usr/local/bin/claude
+
+# Copy vamp source
+USER testuser
+WORKDIR /home/testuser
+COPY --chown=testuser:testuser . /home/testuser/vamp
+
+# Copy test scripts
+COPY --chown=testuser:testuser tests/scripts /home/testuser/tests
+
+# Set working directory
+WORKDIR /home/testuser/vamp
+
+# Default command runs test suite
+CMD ["/home/testuser/tests/run-tests.sh"]

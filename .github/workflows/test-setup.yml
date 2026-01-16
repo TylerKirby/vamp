@@ -1,0 +1,179 @@
+name: Test Setup Flow
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'bin/vamp'
+      - 'install.sh'
+      - 'tests/**'
+      - '.github/workflows/test-setup.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'bin/vamp'
+      - 'install.sh'
+      - 'tests/**'
+      - '.github/workflows/test-setup.yml'
+  workflow_dispatch:
+
+jobs:
+  # ============================================
+  # macOS Tests (via GitHub Actions runners)
+  # ============================================
+  macos-intel:
+    name: macOS (Intel)
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies via Homebrew
+        run: |
+          brew install tmux htop fzf jq yazi
+
+      - name: Create mock claude CLI
+        run: |
+          sudo mkdir -p /usr/local/bin
+          echo '#!/bin/bash' | sudo tee /usr/local/bin/claude
+          echo 'echo "Mock Claude CLI v1.0.0"' | sudo tee -a /usr/local/bin/claude
+          echo 'if [[ "$1" == "--version" ]]; then echo "1.0.0"; fi' | sudo tee -a /usr/local/bin/claude
+          sudo chmod +x /usr/local/bin/claude
+
+      - name: Run install test
+        run: |
+          export VAMP_DIR="$PWD"
+          chmod +x tests/scripts/*.sh
+          ./tests/scripts/test-install.sh
+
+      - name: Run setup test
+        run: |
+          export VAMP_BIN="$HOME/.local/bin/vamp"
+          export PATH="$HOME/.local/bin:$PATH"
+          ./tests/scripts/test-setup.sh
+
+      - name: Run init test
+        run: |
+          export VAMP_BIN="$HOME/.local/bin/vamp"
+          export PATH="$HOME/.local/bin:$PATH"
+          ./tests/scripts/test-init.sh
+
+      - name: Run doctor test
+        run: |
+          export VAMP_BIN="$HOME/.local/bin/vamp"
+          export PATH="$HOME/.local/bin:$PATH"
+          ./tests/scripts/test-doctor.sh
+
+  macos-arm:
+    name: macOS (ARM)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies via Homebrew
+        run: |
+          brew install tmux htop fzf jq yazi
+
+      - name: Create mock claude CLI
+        run: |
+          sudo mkdir -p /usr/local/bin
+          echo '#!/bin/bash' | sudo tee /usr/local/bin/claude
+          echo 'echo "Mock Claude CLI v1.0.0"' | sudo tee -a /usr/local/bin/claude
+          echo 'if [[ "$1" == "--version" ]]; then echo "1.0.0"; fi' | sudo tee -a /usr/local/bin/claude
+          sudo chmod +x /usr/local/bin/claude
+
+      - name: Run install test
+        run: |
+          export VAMP_DIR="$PWD"
+          chmod +x tests/scripts/*.sh
+          ./tests/scripts/test-install.sh
+
+      - name: Run setup test
+        run: |
+          export VAMP_BIN="$HOME/.local/bin/vamp"
+          export PATH="$HOME/.local/bin:$PATH"
+          ./tests/scripts/test-setup.sh
+
+      - name: Run init test
+        run: |
+          export VAMP_BIN="$HOME/.local/bin/vamp"
+          export PATH="$HOME/.local/bin:$PATH"
+          ./tests/scripts/test-init.sh
+
+      - name: Run doctor test
+        run: |
+          export VAMP_BIN="$HOME/.local/bin/vamp"
+          export PATH="$HOME/.local/bin:$PATH"
+          ./tests/scripts/test-doctor.sh
+
+  # ============================================
+  # Linux Tests (via Docker)
+  # ============================================
+  ubuntu:
+    name: Ubuntu 24.04
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t vamp-test-ubuntu -f tests/docker/Dockerfile.ubuntu .
+
+      - name: Run tests in container
+        run: |
+          docker run --rm vamp-test-ubuntu
+
+  fedora:
+    name: Fedora
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t vamp-test-fedora -f tests/docker/Dockerfile.fedora .
+
+      - name: Run tests in container
+        run: |
+          docker run --rm vamp-test-fedora
+
+  arch:
+    name: Arch Linux
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build Docker image
+        run: |
+          docker build -t vamp-test-arch -f tests/docker/Dockerfile.arch .
+
+      - name: Run tests in container
+        run: |
+          docker run --rm vamp-test-arch
+
+  # ============================================
+  # Unit Tests (bats)
+  # ============================================
+  unit-tests:
+    name: Unit Tests (bats)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - name: Install bats dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tmux jq
+
+      - name: Create mock claude CLI
+        run: |
+          sudo mkdir -p /usr/local/bin
+          echo '#!/bin/bash' | sudo tee /usr/local/bin/claude
+          echo 'echo "Mock Claude CLI v1.0.0"' | sudo tee -a /usr/local/bin/claude
+          echo 'if [[ "$1" == "--version" ]]; then echo "1.0.0"; fi' | sudo tee -a /usr/local/bin/claude
+          sudo chmod +x /usr/local/bin/claude
+
+      - name: Run bats tests
+        run: |
+          ./tests/run.sh
