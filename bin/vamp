@@ -18,6 +18,10 @@ MONITOR_CMD="${VAMP_MONITOR:-htop}"
 CLAUDE_CMD="${VAMP_CLAUDE_CMD:-claude}"
 PROJECTS_DIR="${VAMP_PROJECTS_DIR:-$HOME/Projects}"
 
+# Verbose/debug mode - set via flags or env vars
+VAMP_VERBOSE="${VAMP_VERBOSE:-}"
+VAMP_DEBUG="${VAMP_DEBUG:-}"
+
 # Colors
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -26,6 +30,246 @@ BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 DIM='\033[2m'
 NC='\033[0m'
+
+# ============================================
+# Logging helpers
+# ============================================
+
+# Log verbose messages (shown with --verbose or VAMP_VERBOSE=1)
+# Output goes to stderr to not pollute normal output
+log_verbose() {
+    [[ -n "$VAMP_VERBOSE" ]] && echo -e "${DIM}$*${NC}" >&2
+    return 0
+}
+
+# Log debug messages (shown with --debug or VAMP_DEBUG=1)
+# Includes [DEBUG] prefix and timestamp for troubleshooting
+log_debug() {
+    [[ -n "$VAMP_DEBUG" ]] && echo -e "${DIM}[DEBUG $(date +%H:%M:%S)] $*${NC}" >&2
+    return 0
+}
+
+# Log a command before executing it (for --debug mode)
+# Usage: run_cmd "description" command args...
+run_cmd() {
+    local desc="$1"
+    shift
+    log_debug "$desc: $*"
+    "$@"
+}
+
+# ============================================
+# Progress indicators
+# ============================================
+
+# Check if we're outputting to a TTY (interactive terminal)
+# Progress indicators are hidden when piped or redirected
+is_tty() {
+    [ -t 1 ]
+}
+
+# Show progress for discrete steps: (1/4), (2/4), etc.
+# Usage: show_progress current total "message"
+# Example: show_progress 2 4 "Creating worktree"
+show_progress() {
+    local current="$1"
+    local total="$2"
+    local message="$3"
+
+    is_tty || return 0
+    printf "\r  ${DIM}(%d/%d)${NC} %s" "$current" "$total" "$message"
+}
+
+# Clear the current progress line
+clear_progress() {
+    is_tty || return 0
+    printf "\r\033[K"
+}
+
+# Spinner characters for indeterminate progress
+SPINNER_CHARS='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
+SPINNER_PID=""
+
+# Start a background spinner with a message
+# Usage: start_spinner "message"
+start_spinner() {
+    local message="$1"
+    is_tty || return 0
+
+    # Don't start if already running
+    [ -n "$SPINNER_PID" ] && return 0
+
+    (
+        local i=0
+        local len=${#SPINNER_CHARS}
+        while true; do
+            printf "\r  ${CYAN}${SPINNER_CHARS:$i:1}${NC} %s" "$message"
+            i=$(( (i + 1) % len ))
+            sleep 0.1
+        done
+    ) &
+    SPINNER_PID=$!
+    disown $SPINNER_PID 2>/dev/null
+}
+
+# Stop the spinner and clear the line
+stop_spinner() {
+    is_tty || return 0
+
+    if [ -n "$SPINNER_PID" ]; then
+        kill $SPINNER_PID 2>/dev/null
+        wait $SPINNER_PID 2>/dev/null
+        SPINNER_PID=""
+        clear_progress
+    fi
+}
+
+# Ensure spinner is stopped on script exit
+trap 'stop_spinner' EXIT
+
+# ============================================
+# Error handling helpers
+# ============================================
+
+# Show an error message with optional remediation suggestion
+# Usage: show_error "message" ["suggestion"]
+show_error() {
+    local message="$1"
+    local suggestion="${2:-}"
+
+    echo -e "${RED}Error: $message${NC}" >&2
+    if [ -n "$suggestion" ]; then
+        echo -e "${DIM}  → $suggestion${NC}" >&2
+    fi
+}
+
+# Show an error and exit
+# Usage: die "message" ["suggestion"] [exit_code]
+die() {
+    local message="$1"
+    local suggestion="${2:-}"
+    local exit_code="${3:-1}"
+
+    show_error "$message" "$suggestion"
+    exit "$exit_code"
+}
+
+# Capture git command output and show detailed error on failure
+# Usage: git_cmd "description" git args...
+# Returns git exit code, stores stderr in GIT_ERROR
+GIT_ERROR=""
+git_cmd() {
+    local desc="$1"
+    shift
+    local stderr_file=$(mktemp)
+
+    log_debug "$desc: git $*"
+
+    if git "$@" 2>"$stderr_file"; then
+        rm -f "$stderr_file"
+        return 0
+    else
+        local exit_code=$?
+        GIT_ERROR=$(cat "$stderr_file")
+        rm -f "$stderr_file"
+        log_debug "git failed (exit $exit_code): $GIT_ERROR"
+        return $exit_code
+    fi
+}
+
+# Check if a git error is retryable (transient network issue)
+# Usage: is_retryable_git_error "$error_message"
+# Returns 0 if retryable, 1 if permanent
+is_retryable_git_error() {
+    local error="$1"
+
+    # Retryable network errors
+    local retryable_patterns=(
+        "Could not resolve host"
+        "Connection refused"
+        "Connection timed out"
+        "Network is unreachable"
+        "Connection reset by peer"
+        "Failed to connect"
+        "Unable to access"
+        "Couldn't resolve host"
+        "The requested URL returned error: 5"  # 5xx server errors
+        "SSL_connect"
+        "gnutls_handshake"
+        "Operation timed out"
+    )
+
+    for pattern in "${retryable_patterns[@]}"; do
+        if [[ "$error" == *"$pattern"* ]]; then
+            return 0  # Retryable
+        fi
+    done
+
+    return 1  # Not retryable (permanent error)
+}
+
+# Push with automatic retry on transient network failures
+# Usage: git_push_with_retry [git push args...]
+# Returns 0 on success, 1 on permanent failure after all retries
+# Respects VAMP_PUSH_RETRIES env var (default: 3)
+git_push_with_retry() {
+    local max_retries="${VAMP_PUSH_RETRIES:-3}"
+    local attempt=1
+    local backoff=1
+    local stderr_file=$(mktemp)
+    local all_errors=""
+
+    log_debug "git_push_with_retry: max_retries=$max_retries, args: $*"
+
+    while [ "$attempt" -le "$max_retries" ]; do
+        log_debug "Push attempt $attempt/$max_retries"
+
+        if git push "$@" 2>"$stderr_file"; then
+            rm -f "$stderr_file"
+            if [ "$attempt" -gt 1 ]; then
+                echo -e "${GREEN}Push succeeded on attempt $attempt${NC}"
+            fi
+            return 0
+        fi
+
+        local exit_code=$?
+        local error=$(cat "$stderr_file")
+        GIT_ERROR="$error"
+
+        # Accumulate errors for final report
+        all_errors="${all_errors}Attempt $attempt: $error"$'\n'
+
+        log_debug "Push failed (exit $exit_code): $error"
+
+        # Check if error is retryable
+        if ! is_retryable_git_error "$error"; then
+            rm -f "$stderr_file"
+            log_verbose "Push failed with permanent error (not retrying)"
+            show_error "Git push failed" "This appears to be a permanent error, not a network issue"
+            echo -e "${DIM}Error: $error${NC}" >&2
+            return 1
+        fi
+
+        # If we have more retries, wait and try again
+        if [ "$attempt" -lt "$max_retries" ]; then
+            echo -e "${YELLOW}Push failed (network error), retrying ($((attempt + 1))/$max_retries)...${NC}"
+            log_verbose "Waiting ${backoff}s before retry"
+            sleep "$backoff"
+            # Exponential backoff: 1s, 2s, 4s
+            backoff=$((backoff * 2))
+        fi
+
+        ((attempt++))
+    done
+
+    rm -f "$stderr_file"
+
+    # All retries exhausted
+    show_error "Git push failed after $max_retries attempts" "Check your network connection and try again"
+    echo -e "${DIM}Errors from all attempts:${NC}" >&2
+    echo -e "${DIM}$all_errors${NC}" >&2
+    return 1
+}
 
 # Load config if exists
 [ -f "$HOME/.config/vamp/config" ] && source "$HOME/.config/vamp/config"
@@ -102,8 +346,14 @@ ${YELLOW}MOUSE:${NC}
     Click pane             Select pane
     Drag border            Resize pane
 
+${YELLOW}GLOBAL FLAGS:${NC}
+    --verbose              Show additional status messages
+    --debug                Show all commands being executed (implies --verbose)
+
 ${YELLOW}CONFIG:${NC}
     ~/.config/vamp/config
+    VAMP_VERBOSE=1         Enable verbose mode via environment
+    VAMP_DEBUG=1           Enable debug mode via environment
 
 EOF
 }
@@ -746,6 +996,7 @@ install_dependencies() {
 # Validate vamp and beads setup
 doctor() {
     echo -e "${CYAN}vamp doctor${NC} - Checking setup..."
+    log_debug "doctor: starting diagnostics"
     echo ""
 
     local all_passed=true
@@ -753,6 +1004,7 @@ doctor() {
     local fixes=()
 
     # Check tmux
+    log_debug "Checking tmux..."
     if command -v tmux &>/dev/null; then
         local tmux_version=$(tmux -V 2>/dev/null | head -1)
         echo -e "  ${GREEN}✓${NC} tmux installed ($tmux_version)"
@@ -903,11 +1155,34 @@ SWARM_DIR=".vamp-workers"
 create_worktrees() {
     local count="${1:-4}"
     local project_dir="${2:-$(pwd)}"
+    local dry_run="${3:-}"
+
+    log_debug "create_worktrees: count=$count project_dir=$project_dir dry_run=$dry_run"
 
     # Validate we're in a git repo
     if ! git -C "$project_dir" rev-parse --git-dir &>/dev/null; then
-        echo -e "${RED}Error: Not a git repository${NC}"
+        show_error "Not a git repository: $project_dir" "Run 'git init' or 'vamp init' first"
+        log_debug "create_worktrees: failed - not a git repository"
         return 1
+    fi
+
+    local worktree_base="$project_dir/$SWARM_DIR"
+    local current_branch=$(git -C "$project_dir" branch --show-current)
+    local base_ref="${current_branch:-HEAD}"
+
+    # Handle dry-run mode
+    if [ "$dry_run" = "yes" ]; then
+        echo -e "${YELLOW}[DRY-RUN]${NC} Would create $count worktrees from $base_ref:"
+        echo ""
+        for i in $(seq 1 "$count"); do
+            local branch="swarm/worker-$i"
+            local worktree="$worktree_base/worker-$i"
+            echo -e "  ${CYAN}worker-$i${NC} → $branch"
+            echo -e "    ${DIM}$worktree${NC}"
+        done
+        echo ""
+        echo -e "${DIM}No changes made (dry-run mode)${NC}"
+        return 0
     fi
 
     # Check for uncommitted changes in main worktree
@@ -917,16 +1192,12 @@ create_worktrees() {
         [[ ! "$confirm" =~ ^[Yy]$ ]] && return 1
     fi
 
-    local worktree_base="$project_dir/$SWARM_DIR"
-    local current_branch=$(git -C "$project_dir" branch --show-current)
-    local base_ref="${current_branch:-HEAD}"
-
     # Check if worktrees already exist
     if [ -d "$worktree_base" ]; then
         local existing=$(ls -d "$worktree_base"/worker-* 2>/dev/null | wc -l | tr -d ' ')
         if [ "$existing" -gt 0 ]; then
-            echo -e "${YELLOW}Swarm worktrees already exist ($existing workers)${NC}"
-            echo "Run 'vamp swarm --cleanup' first or 'vamp swarm --status' to check"
+            show_error "Swarm worktrees already exist ($existing workers in $worktree_base)" \
+                "Run 'vamp swarm --cleanup' first, or 'vamp swarm --status' to check status"
             return 1
         fi
     fi
@@ -940,19 +1211,30 @@ create_worktrees() {
     fi
 
     echo -e "${CYAN}Creating $count swarm worktrees from $base_ref...${NC}"
+    log_verbose "Base ref: $base_ref"
 
     for i in $(seq 1 "$count"); do
         local branch="swarm/worker-$i"
         local worktree="$worktree_base/worker-$i"
 
+        # Show progress indicator
+        show_progress "$i" "$count" "Creating worker-$i..."
+
+        log_debug "Creating worker-$i: branch=$branch worktree=$worktree"
+
         # Create branch if it doesn't exist
         if ! git -C "$project_dir" show-ref --verify --quiet "refs/heads/$branch"; then
+            log_debug "Creating branch $branch from $base_ref"
             git -C "$project_dir" branch "$branch" "$base_ref" 2>/dev/null
+        else
+            log_verbose "Branch $branch already exists"
         fi
 
         # Create worktree
-        if git -C "$project_dir" worktree add "$worktree" "$branch" 2>/dev/null; then
+        clear_progress
+        if git_cmd "Create worktree" -C "$project_dir" worktree add "$worktree" "$branch"; then
             echo -e "  ${GREEN}✓${NC} worker-$i → $branch"
+            log_debug "Worktree created successfully: $worktree"
 
             # Create context file for Claude to reference
             cat > "$worktree/.vamp-worker" << EOF
@@ -973,7 +1255,23 @@ EOF
                 echo -e "\n# Vamp worker context\n.vamp-worker\n.swarm-prompt\n\n# Common test artifacts\n__pycache__/\n*.pyc\nnode_modules/" >> "$worktree/.gitignore"
             fi
         else
-            echo -e "  ${RED}✗${NC} Failed to create worker-$i"
+            # Provide specific error with remediation
+            local error_msg="Failed to create worker-$i"
+            local suggestion=""
+            if [[ "$GIT_ERROR" == *"already exists"* ]]; then
+                error_msg="Failed to create worker-$i: worktree already exists at $worktree"
+                suggestion="Run 'vamp swarm --cleanup' first"
+            elif [[ "$GIT_ERROR" == *"already checked out"* ]]; then
+                error_msg="Failed to create worker-$i: branch $branch is already checked out"
+                suggestion="Run 'vamp swarm --cleanup' to remove existing worktrees"
+            elif [[ "$GIT_ERROR" == *"permission denied"* ]] || [[ "$GIT_ERROR" == *"Permission denied"* ]]; then
+                error_msg="Failed to create worker-$i: permission denied"
+                suggestion="Check directory permissions for $worktree_base"
+            elif [ -n "$GIT_ERROR" ]; then
+                error_msg="Failed to create worker-$i: $GIT_ERROR"
+            fi
+            echo -e "  ${RED}✗${NC} $error_msg"
+            [ -n "$suggestion" ] && echo -e "      ${DIM}→ $suggestion${NC}"
         fi
     done
 
@@ -987,16 +1285,19 @@ cleanup_worktrees() {
     local project_dir="${1:-$(pwd)}"
     local delete_branches="${2:-}"  # pass "branches" to also delete branches
     local auto_confirm="${3:-}"     # pass "yes" to skip confirmation
+    local dry_run="${4:-}"          # pass "yes" for dry-run mode
+
+    log_debug "cleanup_worktrees: project_dir=$project_dir delete_branches=$delete_branches auto_confirm=$auto_confirm dry_run=$dry_run"
 
     local worktree_base="$project_dir/$SWARM_DIR"
 
     if [ ! -d "$worktree_base" ]; then
         echo -e "${DIM}No swarm worktrees found${NC}"
+        log_debug "cleanup_worktrees: $worktree_base does not exist"
         return 0
     fi
 
     # List what will be removed
-    echo -e "${CYAN}Swarm worktrees to remove:${NC}"
     local worktrees=$(ls -d "$worktree_base"/worker-* 2>/dev/null)
 
     if [ -z "$worktrees" ]; then
@@ -1004,6 +1305,32 @@ cleanup_worktrees() {
         return 0
     fi
 
+    # Handle dry-run mode
+    if [ "$dry_run" = "yes" ]; then
+        echo -e "${YELLOW}[DRY-RUN]${NC} Would remove worktrees:"
+        echo ""
+        for wt in $worktrees; do
+            local name=$(basename "$wt")
+            local branch=$(git -C "$wt" branch --show-current 2>/dev/null || echo "unknown")
+
+            # Check for uncommitted changes
+            local status=""
+            if ! git -C "$wt" diff-index --quiet HEAD -- 2>/dev/null; then
+                status=" ${YELLOW}(uncommitted changes!)${NC}"
+            fi
+
+            echo -e "  ${CYAN}$name${NC} → $branch$status"
+        done
+        if [ "$delete_branches" = "branches" ]; then
+            echo ""
+            echo -e "${YELLOW}[DRY-RUN]${NC} Would also delete branches"
+        fi
+        echo ""
+        echo -e "${DIM}No changes made (dry-run mode)${NC}"
+        return 0
+    fi
+
+    echo -e "${CYAN}Swarm worktrees to remove:${NC}"
     local branches_to_delete=()
 
     for wt in $worktrees; do
@@ -1027,15 +1354,24 @@ cleanup_worktrees() {
     fi
 
     # Remove worktrees
+    local wt_array=($worktrees)
+    local wt_total=${#wt_array[@]}
+    local wt_current=0
+
     for wt in $worktrees; do
+        ((wt_current++))
         local name=$(basename "$wt")
-        if git -C "$project_dir" worktree remove --force "$wt" 2>/dev/null; then
+        show_progress "$wt_current" "$wt_total" "Removing $name..."
+        if git_cmd "Remove worktree" -C "$project_dir" worktree remove --force "$wt"; then
+            clear_progress
             echo -e "  ${GREEN}✓${NC} Removed $name"
         else
             # Fallback: manual removal
+            log_verbose "git worktree remove failed, trying manual removal: $GIT_ERROR"
             rm -rf "$wt"
             git -C "$project_dir" worktree prune 2>/dev/null
-            echo -e "  ${GREEN}✓${NC} Removed $name (force)"
+            clear_progress
+            echo -e "  ${GREEN}✓${NC} Removed $name (manual cleanup)"
         fi
     done
 
@@ -1198,10 +1534,14 @@ swarm_merge() {
     local auto_merge="${2:-}"  # pass "auto" for non-interactive
     local force_merge="${3:-}" # pass "yes" to merge despite uncommitted changes
     local autostash="${4:-}"   # pass "yes" to stash dirty changes before merge
+    local dry_run="${5:-}"     # pass "yes" for dry-run mode
     local worktree_base="$project_dir/$SWARM_DIR"
+
+    log_debug "swarm_merge: project_dir=$project_dir auto_merge=$auto_merge force_merge=$force_merge autostash=$autostash dry_run=$dry_run"
 
     if [ ! -d "$worktree_base" ]; then
         echo -e "${DIM}No swarm worktrees found${NC}"
+        log_debug "swarm_merge: $worktree_base does not exist"
         return 0
     fi
 
@@ -1298,6 +1638,19 @@ swarm_merge() {
         return 0
     fi
 
+    # Handle dry-run mode
+    if [ "$dry_run" = "yes" ]; then
+        echo -e "${YELLOW}[DRY-RUN]${NC} Would merge branches into $main_branch:"
+        echo ""
+        for branch in "${branches_to_merge[@]}"; do
+            local ahead=$(git -C "$project_dir" rev-list --count "$main_branch".."$branch" 2>/dev/null || echo "?")
+            echo -e "  ${CYAN}$branch${NC} ($ahead commits)"
+        done
+        echo ""
+        echo -e "${DIM}No changes made (dry-run mode)${NC}"
+        return 0
+    fi
+
     echo -e "${CYAN}Branches to merge:${NC}"
     for branch in "${branches_to_merge[@]}"; do
         echo "  - $branch"
@@ -1321,26 +1674,37 @@ swarm_merge() {
     # Use filter_ignorable_dirty to exclude common artifacts like .beads/, .vamp-worker, etc.
     local dirty_files=$(git -C "$project_dir" status --porcelain 2>/dev/null | filter_ignorable_dirty)
     if [ -n "$dirty_files" ]; then
-        echo -e "${RED}Error: Main worktree has uncommitted or untracked files${NC}"
+        show_error "Main worktree has uncommitted changes that would block merge"
         echo "$dirty_files" | head -10 | sed 's/^/  /'
         echo ""
-        echo "Commit or stash changes before merging"
+        echo -e "${DIM}  → Commit changes: git add . && git commit -m 'WIP'${NC}"
+        echo -e "${DIM}  → Or stash them: git stash${NC}"
         return 1
     fi
 
     # Merge each branch
     local merged=0
     local failed=0
+    local total=${#branches_to_merge[@]}
+    local current=0
 
     for branch in "${branches_to_merge[@]}"; do
+        ((current++))
         echo ""
+        show_progress "$current" "$total" "Merging $branch..."
         echo -e "${CYAN}Merging $branch...${NC}"
+        log_debug "git merge --no-edit $branch"
 
-        if git -C "$project_dir" merge --no-edit "$branch" 2>/dev/null; then
+        clear_progress
+        if git_cmd "Merge branch" -C "$project_dir" merge --no-edit "$branch"; then
             echo -e "  ${GREEN}✓${NC} Merged $branch"
+            log_debug "Merge successful: $branch"
             ((merged++))
         else
             echo -e "  ${RED}✗${NC} Merge conflict in $branch"
+            if [ -n "$GIT_ERROR" ]; then
+                echo -e "      ${DIM}$GIT_ERROR${NC}" | head -3
+            fi
             echo ""
             echo -e "${YELLOW}Conflict detected. Options:${NC}"
             echo "  1. Resolve manually: cd $project_dir && git status"
@@ -1387,12 +1751,36 @@ swarm_finish() {
     local auto_confirm="${4:-}"
     local force_merge="${5:-}"
     local autostash="${6:-}"
+    local dry_run="${7:-}"
 
     echo -e "${CYAN}═══ Swarm Finish Workflow ═══${NC}"
     echo ""
 
     # Show status first
     swarm_status "$project_dir"
+
+    # Handle dry-run mode
+    if [ "$dry_run" = "yes" ]; then
+        echo ""
+        echo -e "${YELLOW}[DRY-RUN]${NC} Would perform the following actions:"
+        echo ""
+
+        # Show what merge would do
+        local worktrees=$(ls -d "$project_dir/$SWARM_DIR"/worker-* 2>/dev/null)
+        if [ -n "$worktrees" ]; then
+            swarm_merge "$project_dir" "" "$force_merge" "$autostash" "$dry_run"
+            echo ""
+            cleanup_worktrees "$project_dir" "$delete_branches" "" "$dry_run"
+        else
+            echo -e "${DIM}No swarm worktrees found${NC}"
+        fi
+
+        if [ "$close_window" = "yes" ]; then
+            echo ""
+            echo -e "${YELLOW}[DRY-RUN]${NC} Would close swarm window"
+        fi
+        return 0
+    fi
 
     # Ask about merging
     local worktrees=$(ls -d "$project_dir/$SWARM_DIR"/worker-* 2>/dev/null)
@@ -1960,6 +2348,7 @@ start_swarm() {
     local AUTO_CONFIRM=""
     local FORCE_MERGE=""
     local AUTOSTASH=""
+    local DRY_RUN=""
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -2006,6 +2395,10 @@ start_swarm() {
                 AUTOSTASH="yes"
                 shift
                 ;;
+            --dry-run)
+                DRY_RUN="yes"
+                shift
+                ;;
             -y|--yes)
                 AUTO_CONFIRM="yes"
                 shift
@@ -2026,6 +2419,7 @@ start_swarm() {
                 echo -e "${YELLOW}OPTIONS:${NC}"
                 echo "    -w, --workers N            Set exact worker count (disables auto-scaling)"
                 echo "    -y, --yes                  Skip confirmation prompts (non-interactive)"
+                echo "    --dry-run                  Show what would happen without making changes"
                 echo "    --force                    Merge branches even if they have uncommitted changes"
                 echo "    --autostash                Stash uncommitted changes before merge, restore after"
                 echo ""
@@ -2092,23 +2486,23 @@ start_swarm() {
             return 0
             ;;
         cleanup)
-            cleanup_worktrees "$PROJECT_DIR" "" "$AUTO_CONFIRM"
+            cleanup_worktrees "$PROJECT_DIR" "" "$AUTO_CONFIRM" "$DRY_RUN"
             return 0
             ;;
         merge)
             if [ "$AUTO_CONFIRM" = "yes" ]; then
-                swarm_merge "$PROJECT_DIR" "auto" "$FORCE_MERGE" "$AUTOSTASH"
+                swarm_merge "$PROJECT_DIR" "auto" "$FORCE_MERGE" "$AUTOSTASH" "$DRY_RUN"
             else
-                swarm_merge "$PROJECT_DIR" "" "$FORCE_MERGE" "$AUTOSTASH"
+                swarm_merge "$PROJECT_DIR" "" "$FORCE_MERGE" "$AUTOSTASH" "$DRY_RUN"
             fi
             return 0
             ;;
         finish)
-            swarm_finish "$PROJECT_DIR" "" "$CLOSE_WINDOW" "$AUTO_CONFIRM" "$FORCE_MERGE" "$AUTOSTASH"
+            swarm_finish "$PROJECT_DIR" "" "$CLOSE_WINDOW" "$AUTO_CONFIRM" "$FORCE_MERGE" "$AUTOSTASH" "$DRY_RUN"
             return 0
             ;;
         finish-branches)
-            swarm_finish "$PROJECT_DIR" "branches" "$CLOSE_WINDOW" "$AUTO_CONFIRM" "$FORCE_MERGE" "$AUTOSTASH"
+            swarm_finish "$PROJECT_DIR" "branches" "$CLOSE_WINDOW" "$AUTO_CONFIRM" "$FORCE_MERGE" "$AUTOSTASH" "$DRY_RUN"
             return 0
             ;;
     esac
@@ -2116,6 +2510,14 @@ start_swarm() {
     # Start swarm session
     local PROJECT_NAME=$(basename "$PROJECT_DIR")
     local SESSION_NAME="vamp-$(echo "$PROJECT_NAME" | tr '.:' '-')"
+
+    # Handle dry-run for starting swarm (no action specified)
+    if [ "$DRY_RUN" = "yes" ]; then
+        echo -e "${YELLOW}[DRY-RUN]${NC} Would create swarm with $WORKER_COUNT workers"
+        echo ""
+        create_worktrees "$WORKER_COUNT" "$PROJECT_DIR" "$DRY_RUN"
+        return 0
+    fi
 
     echo -e "${CYAN}  ♪♫ vamp swarm 🐝 ♫♪${NC} ${DIM}v${VAMP_VERSION}${NC}"
     echo -e "${GREEN}  Project:${NC} $PROJECT_NAME"
@@ -2186,6 +2588,30 @@ start_swarm() {
 
 # Only run main when executed, not sourced (allows sourcing for tests)
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+
+# Parse global flags (--verbose, --debug) before subcommand
+args=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --verbose)
+            VAMP_VERBOSE=1
+            shift
+            ;;
+        --debug)
+            VAMP_DEBUG=1
+            VAMP_VERBOSE=1  # debug implies verbose
+            shift
+            ;;
+        *)
+            args+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${args[@]}"
+
+log_debug "vamp v${VAMP_VERSION} starting"
+log_debug "Command: ${1:-<none>} Args: ${*:2}"
 
 case "${1:-}" in
     help|--help|-h)
