@@ -266,3 +266,96 @@ teardown() {
     assert_success
     assert_output --partial "WORKFLOW"
 }
+
+# ============================================
+# --dry-run Tests
+# ============================================
+
+@test "swarm: --help shows --dry-run option" {
+    run_vamp swarm --help
+    assert_success
+    assert_output --partial "--dry-run"
+}
+
+@test "swarm cleanup: --dry-run shows what would be removed without removing" {
+    mkdir -p .vamp-workers
+    git worktree add .vamp-workers/worker-1 -b swarm/worker-1
+    git worktree add .vamp-workers/worker-2 -b swarm/worker-2
+
+    run_vamp swarm --cleanup --dry-run
+    assert_success
+    assert_output --partial "[DRY-RUN]"
+    assert_output --partial "worker-1"
+    assert_output --partial "worker-2"
+
+    # Worktrees should still exist
+    [ -d ".vamp-workers/worker-1" ]
+    [ -d ".vamp-workers/worker-2" ]
+}
+
+@test "swarm merge: --dry-run shows branches that would be merged without merging" {
+    mkdir -p .vamp-workers
+    git worktree add .vamp-workers/worker-1 -b swarm/worker-1
+
+    # Add a commit to the worker
+    echo "new file" > .vamp-workers/worker-1/newfile.txt
+    git -C .vamp-workers/worker-1 add .
+    git -C .vamp-workers/worker-1 commit -m "Add new file"
+
+    local commit_before=$(git rev-parse HEAD)
+
+    run_vamp swarm --merge --dry-run
+    assert_success
+    assert_output --partial "[DRY-RUN]"
+    assert_output --partial "swarm/worker-1"
+
+    # Main branch should not have changed
+    local commit_after=$(git rev-parse HEAD)
+    [ "$commit_before" = "$commit_after" ]
+}
+
+@test "swarm: --dry-run does not create worktrees" {
+    # Ensure no worktrees exist
+    [ ! -d ".vamp-workers" ]
+
+    run_vamp swarm --dry-run -w 2
+    assert_success
+    assert_output --partial "[DRY-RUN]"
+    assert_output --partial "worker-1"
+    assert_output --partial "worker-2"
+
+    # Worktrees should NOT have been created
+    [ ! -d ".vamp-workers" ]
+}
+
+@test "swarm finish: --dry-run shows both merge and cleanup actions" {
+    mkdir -p .vamp-workers
+    git worktree add .vamp-workers/worker-1 -b swarm/worker-1
+
+    echo "new file" > .vamp-workers/worker-1/newfile.txt
+    git -C .vamp-workers/worker-1 add .
+    git -C .vamp-workers/worker-1 commit -m "Add new file"
+
+    run_vamp swarm --finish --dry-run
+    assert_success
+    assert_output --partial "[DRY-RUN]"
+
+    # Worktree should still exist
+    [ -d ".vamp-workers/worker-1" ]
+}
+
+@test "swarm cleanup: --dry-run without worktrees shows nothing to do" {
+    run_vamp swarm --cleanup --dry-run
+    assert_success
+    assert_output --partial "No swarm worktrees"
+}
+
+@test "swarm merge: --dry-run without commits shows nothing to merge" {
+    mkdir -p .vamp-workers
+    git worktree add .vamp-workers/worker-1 -b swarm/worker-1
+    # No commits made to worker branch
+
+    run_vamp swarm --merge --dry-run
+    assert_success
+    assert_output --partial "No branches have commits to merge"
+}
