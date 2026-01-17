@@ -33,7 +33,7 @@ NC='\033[0m'
 # Default patterns for files to ignore when checking dirty state
 # These are common dev artifacts that shouldn't block merge operations
 # Override via VAMP_IGNORE_DIRTY env var (pipe-separated patterns)
-VAMP_IGNORE_DIRTY_DEFAULT="__pycache__|\.pyc$|\.swarm-prompt|\.gitignore|\.db$|\.beads/|\.coverage|\.log$|\.pytest_cache|node_modules|\.DS_Store|\.env\.local"
+VAMP_IGNORE_DIRTY_DEFAULT="__pycache__|\.pyc$|\.swarm-prompt|\.vamp-worker|\.gitignore|\.db$|\.beads/|\.coverage|\.log$|\.pytest_cache|node_modules|\.DS_Store|\.env\.local"
 VAMP_IGNORE_DIRTY="${VAMP_IGNORE_DIRTY:-$VAMP_IGNORE_DIRTY_DEFAULT}"
 
 # Filter out ignorable files from git status output
@@ -1309,8 +1309,17 @@ swarm_merge() {
         [[ ! "$confirm" =~ ^[Yy]$ ]] && return 1
     fi
 
+    # Remove temporary worker files that shouldn't be tracked
+    # These files (.swarm-prompt, .vamp-worker) are created for Claude context
+    # and can cause spurious merge conflicts if left in worktrees
+    rm -f "$project_dir/.swarm-prompt" "$project_dir/.vamp-worker" 2>/dev/null
+    for wt in $worktrees; do
+        rm -f "$wt/.swarm-prompt" "$wt/.vamp-worker" 2>/dev/null
+    done
+
     # Ensure main worktree is clean (check both staged/unstaged changes AND untracked files)
-    local dirty_files=$(git -C "$project_dir" status --porcelain 2>/dev/null)
+    # Use filter_ignorable_dirty to exclude common artifacts like .beads/, .vamp-worker, etc.
+    local dirty_files=$(git -C "$project_dir" status --porcelain 2>/dev/null | filter_ignorable_dirty)
     if [ -n "$dirty_files" ]; then
         echo -e "${RED}Error: Main worktree has uncommitted or untracked files${NC}"
         echo "$dirty_files" | head -10 | sed 's/^/  /'
