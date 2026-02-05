@@ -61,13 +61,12 @@ Test files are in `tests/unit/` and `tests/integration/`. CI runs automatically 
 
 **bin/vamp** - Main entry point. A single bash script (~400 lines) that:
 - Parses subcommands (list, attach, kill, init, help)
-- Creates tmux sessions with a 5-pane layout: Claude Code, shell, file viewer, htop, usage checker
+- Creates tmux sessions with a 4-pane layout: Claude Code, shell, file viewer, htop
 - The shell pane runs `bd ready` on startup if beads is detected, then is available for any commands
 - Adds one additional tmux window: beads viewer
-- Includes a usage checker pane (Claude instance) for running `/usage` to check session limits
 
 **Tmux Windows:**
-- Window 0 "main": 5-pane layout with Claude Code, shell, yazi, htop, and usage checker
+- Window 0 "main": 4-pane layout with Claude Code, shell, yazi, and htop
 - Window 1 "beads": beads issue viewer (`bv` if installed, simple dashboard fallback)
 - Window 2 "swarm": grid of Claude instances (when swarm mode active)
 
@@ -75,11 +74,10 @@ Test files are in `tests/unit/` and `tests/integration/`. CI runs automatically 
 - Pane 0: Claude Code (top left, 75%) - main work area
 - Pane 1: Shell (bottom left, 25%) - runs `bd ready` on startup if beads detected
 - Pane 2: File viewer/yazi (top right)
-- Pane 3: htop (middle right)
-- Pane 4: Usage checker (bottom right) - Claude instance for running `/usage` to check session limits
+- Pane 3: htop (bottom right)
 
 **lib/vamp-utils.sh** - Shell aliases and functions sourced in user's shell:
-- Launcher shortcuts: `v`, `vp`, `va`, `vk`, `vl`, `vi`
+- Launcher shortcuts: `v`, `vp`, `va`, `vk`, `vl`, `vin`
 - Beads shortcuts: `bds`, `bdl`, `bdn`, `bdp`, `bdcp`, `bdd`
 - Claude shortcuts: `ccr`, `ccc`, `ccs`, `cco`
 - Workflow helpers: `standup`, `eod`
@@ -96,7 +94,10 @@ User config lives at `~/.config/vamp/config`:
 - `VAMP_FILE_VIEWER` - yazi, lf, ranger, nnn
 - `VAMP_MONITOR` - htop, btop, glances
 - `VAMP_CLAUDE_CMD` - claude command
+- `VAMP_CLAUDE_FLAGS` - flags passed to all Claude instances (default: `--dangerously-skip-permissions`)
 - `VAMP_PROJECTS_DIR` - for project picker
+
+By default, all Claude Code instances launched by vamp (main pane and swarm workers) use `--dangerously-skip-permissions`. To disable this, set `VAMP_CLAUDE_FLAGS=""` in your config. To add other flags, set `VAMP_CLAUDE_FLAGS` to your desired flags (this replaces the default).
 
 ## Beads Integration
 
@@ -173,16 +174,6 @@ eod                    # End-of-day checkpoint prompt
 | `bdco` | `bd compact --stats` | Compact (memory decay) |
 | `ss` | `session_start` | Start workflow |
 | `se` | `session_end` | End workflow |
-
-### Usage Checker Pane
-
-The bottom-right pane contains a Claude instance dedicated to checking session limits. Run `/usage` in this pane to see:
-
-- Current session context usage (how close to compaction)
-- Token counts and model info
-- Cost estimates
-
-This helps you know when you're approaching session limits before context compaction occurs.
 
 ## Swarm Mode
 

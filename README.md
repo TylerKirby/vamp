@@ -10,7 +10,6 @@ Terminal-native development environment for Claude Code with beads integration f
 - **Mouse support** for scrolling, pane selection, and resizing
 - **File browser** (yazi) for project navigation
 - **System monitor** (htop) for resource tracking
-- **Usage checker** pane for monitoring Claude session limits via `/usage`
 - **Beads integration** for persistent task/context management
 - **Beads window** with `bv` (beads_viewer) - Kanban, graph, insights, live reload
 - **Session persistence** - detach and reattach anytime
@@ -23,16 +22,15 @@ Terminal-native development environment for Claude Code with beads integration f
 |                        |              |
 |     Claude Code        |  File Viewer |
 |       (75%)            |   (yazi)     |
-|                        +-------+------+
-+------------------------+  htop | usage|
-|   Shell (25%)          |       |checker
-+------------------------+-------+------+
+|                        +--------------+
++------------------------+              |
+|   Shell (25%)          |     htop     |
++------------------------+--------------+
 
 Window 0: main          Window 1: beads (bv viewer)
 ```
 
 - **Shell pane** runs `bd ready` on startup if beads is detected, then available for any commands
-- **Usage checker** is a Claude instance for running `/usage` to check session limits
 
 ## Install
 
@@ -132,7 +130,7 @@ After install, these shortcuts are available:
 | `va <name>` | Attach to session |
 | `vk <name>` | Kill session |
 | `vl` | List sessions |
-| `vi` | Initialize project |
+| `vin` | Initialize project |
 
 ### Beads
 | Command | Action |

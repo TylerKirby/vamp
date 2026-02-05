@@ -19,7 +19,7 @@ alias v='vamp'
 alias vl='vamp list'
 alias va='vamp attach'
 alias vk='vamp kill'
-alias vi='vamp init'
+alias vin='vamp init'
 
 # Project picker with fzf
 vp() {
@@ -221,7 +221,7 @@ Launcher:
   va <name>      Attach to session
   vk <name>      Kill session
   vl             List sessions
-  vi             Init project
+  vin            Init project
 
 Beads:
   bds            Ready tasks
