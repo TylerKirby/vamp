@@ -17,5 +17,10 @@
 # bv (beads viewer) local config and caches
 .bv/
 
-# Vamp swarm worktrees
+# Vamp state and agent worktrees
+.vamp/
+.vamp-agents/
 .vamp-workers/
+
+# Rust build artifacts
+sidebar/target/

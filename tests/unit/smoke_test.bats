@@ -24,11 +24,11 @@ load '../helpers/test_helper'
     assert_success
 }
 
-@test "vamp swarm --help shows swarm usage" {
-    run_vamp swarm --help
+@test "vamp agent shows agent usage" {
+    run_vamp agent
     assert_success
-    assert_output --partial "swarm"
-    assert_output --partial "workers"
+    assert_output --partial "agent"
+    assert_output --partial "add"
 }
 
 @test "vamp binary exists and is executable" {

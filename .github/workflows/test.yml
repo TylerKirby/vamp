@@ -19,7 +19,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y tmux
+          sudo apt-get install -y tmux jq
 
       - name: Configure git
         run: |
@@ -47,3 +47,43 @@ jobs:
 
       - name: Run tests
         run: ./tests/run_tests.sh
+
+  sidebar:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/
+            ~/.cargo/registry/index/
+            ~/.cargo/registry/cache/
+            ~/.cargo/git/db/
+            sidebar/target/
+          key: ${{ runner.os }}-cargo-${{ hashFiles('sidebar/Cargo.lock') }}
+
+      - name: Build sidebar
+        run: cargo build --manifest-path sidebar/Cargo.toml
+
+      - name: Test sidebar
+        run: cargo test --manifest-path sidebar/Cargo.toml
+
+  sidebar-macos:
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build sidebar
+        run: cargo build --manifest-path sidebar/Cargo.toml

@@ -111,19 +111,43 @@ echo -e "  ${GREEN}✓${NC} $BIN_DIR/vamp"
 cp "$SCRIPT_DIR/lib/vamp-utils.sh" "$LIB_DIR/vamp-utils.sh"
 echo -e "  ${GREEN}✓${NC} $LIB_DIR/vamp-utils.sh"
 
+# Build and install sidebar
+echo ""
+echo -e "${BLUE}Installing sidebar...${NC}"
+ARCH="$(uname -m)"
+OS_LC="$(uname -s | tr '[:upper:]' '[:lower:]')"
+
+if [ -d "$SCRIPT_DIR/sidebar" ] && command -v cargo &>/dev/null; then
+    echo "  Building from source..."
+    if cargo build --release --manifest-path "$SCRIPT_DIR/sidebar/Cargo.toml" 2>/dev/null; then
+        cp "$SCRIPT_DIR/sidebar/target/release/vamp-sidebar" "$BIN_DIR/vamp-sidebar"
+        chmod +x "$BIN_DIR/vamp-sidebar"
+        echo -e "  ${GREEN}✓${NC} $BIN_DIR/vamp-sidebar"
+    else
+        echo -e "  ${YELLOW}○${NC} Sidebar build failed (optional, vamp works without it)"
+    fi
+elif command -v cargo &>/dev/null; then
+    echo -e "  ${YELLOW}○${NC} sidebar/ not found, skipping build"
+else
+    echo -e "  ${YELLOW}○${NC} cargo not found, skipping sidebar (install Rust: https://rustup.rs)"
+fi
+
 # Create default config
 if [ ! -f "$CONFIG_DIR/config" ]; then
     cat > "$CONFIG_DIR/config" << 'EOF'
 # vamp configuration
 
-# File viewer: yazi, lf, ranger, nnn
-export VAMP_FILE_VIEWER="yazi"
-
-# System monitor: htop, btop, glances  
-export VAMP_MONITOR="htop"
-
-# Claude command
+# Claude command and flags
 export VAMP_CLAUDE_CMD="claude"
+export VAMP_CLAUDE_FLAGS="--dangerously-skip-permissions"
+
+# Agent type commands (override per-type)
+# export VAMP_AGENT_CLAUDE_CMD="claude"
+# export VAMP_AGENT_CLAUDE_FLAGS="--dangerously-skip-permissions"
+# export VAMP_AGENT_CODEX_CMD="codex"
+# export VAMP_AGENT_CODEX_FLAGS=""
+# export VAMP_AGENT_CURSOR_CMD="cursor"
+# export VAMP_AGENT_CURSOR_FLAGS="--cli"
 
 # Projects directory (for vp command)
 export VAMP_PROJECTS_DIR="$HOME/Projects"

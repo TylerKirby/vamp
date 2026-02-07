@@ -21,6 +21,13 @@ alias va='vamp attach'
 alias vk='vamp kill'
 alias vin='vamp init'
 
+# Agent management
+alias vag='vamp agent'
+alias vaa='vamp agent add claude'
+alias val='vamp agent list'
+alias vak='vamp agent kill'
+alias vam='vamp agent merge --all'
+
 # Project picker with fzf
 vp() {
     if [ -z "$1" ]; then
@@ -222,6 +229,13 @@ Launcher:
   vk <name>      Kill session
   vl             List sessions
   vin            Init project
+
+Agent:
+  vag            Agent commands
+  vaa            Add Claude agent
+  val            List agents
+  vak <id>       Kill agent
+  vam            Merge agent branches
 
 Beads:
   bds            Ready tasks
