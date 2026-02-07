@@ -317,6 +317,7 @@ ${YELLOW}USAGE:${NC}
     vamp init              Initialize project with beads + CLAUDE.md
     vamp setup             Install beads hooks for Claude Code + git
     vamp doctor            Validate setup and show recommendations
+    vamp update             Update vamp to latest GitHub release
     vamp help              Show this help
 
 ${YELLOW}SWARM MODE:${NC}
@@ -1143,6 +1144,82 @@ doctor() {
         echo -e "${RED}Setup incomplete${NC} - run the fixes above"
         return 1
     fi
+}
+
+# ============================================
+# Self-update
+# ============================================
+
+self_update() {
+    local repo="TylerKirby/vamp"
+    local api_url="https://api.github.com/repos/${repo}/releases/latest"
+    local bin_dir="$HOME/.local/bin"
+    local lib_dir="$HOME/.local/share/vamp"
+    local check_only="${1:-}"
+
+    command -v curl &>/dev/null || die "curl is required for update" "Install curl"
+
+    echo -e "${BLUE}Checking for updates...${NC}"
+
+    # Fetch latest release info
+    local response
+    response=$(curl -sf "$api_url") || die "Failed to fetch release info from GitHub" "Check network or visit https://github.com/${repo}/releases"
+
+    # Extract tag name (try jq, fall back to grep)
+    local latest_tag
+    if command -v jq &>/dev/null; then
+        latest_tag=$(echo "$response" | jq -r '.tag_name')
+    else
+        latest_tag=$(echo "$response" | grep '"tag_name"' | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')
+    fi
+
+    # Strip 'v' prefix for comparison
+    local latest_version="${latest_tag#v}"
+
+    if [[ "$latest_version" == "$VAMP_VERSION" ]]; then
+        echo -e "${GREEN}Already up to date (v${VAMP_VERSION})${NC}"
+        return 0
+    fi
+
+    echo -e "  Current: v${VAMP_VERSION}"
+    echo -e "  Latest:  v${latest_version}"
+
+    # If --check flag, just report and exit
+    if [[ "$check_only" == "--check" ]]; then
+        echo -e "\n${YELLOW}Update available. Run 'vamp update' to install.${NC}"
+        return 0
+    fi
+
+    # Download source tarball
+    local source_url="https://github.com/${repo}/archive/refs/tags/${latest_tag}.tar.gz"
+
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    trap "rm -rf '$tmp_dir'" RETURN
+
+    start_spinner "Downloading v${latest_version}..."
+    curl -sfL "$source_url" -o "$tmp_dir/vamp.tar.gz" || {
+        stop_spinner
+        die "Failed to download release" "Visit https://github.com/${repo}/releases"
+    }
+    stop_spinner
+
+    # Extract
+    tar -xzf "$tmp_dir/vamp.tar.gz" -C "$tmp_dir" || die "Failed to extract release"
+    local extracted_dir="$tmp_dir/vamp-${latest_version}"
+
+    # Verify extracted files exist
+    [[ -f "$extracted_dir/bin/vamp" ]] || die "Downloaded release missing bin/vamp"
+    [[ -f "$extracted_dir/lib/vamp-utils.sh" ]] || die "Downloaded release missing lib/vamp-utils.sh"
+
+    # Install
+    mkdir -p "$bin_dir" "$lib_dir"
+    cp "$extracted_dir/bin/vamp" "$bin_dir/vamp"
+    chmod +x "$bin_dir/vamp"
+    cp "$extracted_dir/lib/vamp-utils.sh" "$lib_dir/vamp-utils.sh"
+
+    echo -e "${GREEN}Updated vamp: v${VAMP_VERSION} → v${latest_version}${NC}"
+    echo -e "${DIM}Restart your shell to use the new version${NC}"
 }
 
 # ============================================
@@ -2475,6 +2552,10 @@ case "${1:-}" in
     swarm)
         shift
         start_swarm "$@"
+        ;;
+    update)
+        shift
+        self_update "$@"
         ;;
     version|--version|-v)
         echo "vamp v${VAMP_VERSION}"

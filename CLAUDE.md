@@ -35,6 +35,10 @@ vamp swarm --merge      # Merge swarm branches to main
 vamp swarm --cleanup    # Remove worktrees (keep branches)
 vamp swarm --finish     # Merge + cleanup + delete branches
 
+# Self-update
+vamp update             # Update to latest GitHub release
+vamp update --check     # Check for updates without installing
+
 # Diagnostics
 vamp doctor             # Check setup and show recommendations
 ```
