@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vamp is a terminal-native development environment for Claude Code. It creates a tmux-based workspace with integrated file browsing (yazi), system monitoring (htop), beads issue viewer, and optional beads task tracking.
+Vamp is a terminal-native development environment for Claude Code. It creates a 2-panel tmux workspace: Claude Code main stage (left) + a Ratatui sidebar (right) that manages multiple agents across 6 tabs with a "Blue Note Sessions" jazz aesthetic.
 
 ## Commands
 
@@ -27,13 +27,15 @@ vamp killall            # Kill all sessions
 # Project initialization
 vamp init               # Creates .git, beads, CLAUDE.md template
 
-# Swarm mode (parallel Claude instances)
-vamp swarm              # Start with 4 workers (default)
-vamp swarm -w 2         # Start with N workers (1-8)
-vamp swarm --status     # Show worker status and changes
-vamp swarm --merge      # Merge swarm branches to main
-vamp swarm --cleanup    # Remove worktrees (keep branches)
-vamp swarm --finish     # Merge + cleanup + delete branches
+# Multi-agent mode
+vamp agent add <type>   # Add agent (claude, codex, cursor)
+vamp agent list         # List all agents and status
+vamp agent kill <id>    # Kill an agent
+vamp agent merge        # Merge agent branches to main
+
+# Self-update
+vamp update             # Update to latest GitHub release
+vamp update --check     # Check for updates without installing
 
 # Diagnostics
 vamp doctor             # Check setup and show recommendations
@@ -59,25 +61,51 @@ Test files are in `tests/unit/` and `tests/integration/`. CI runs automatically 
 
 ## Architecture
 
-**bin/vamp** - Main entry point. A single bash script (~400 lines) that:
-- Parses subcommands (list, attach, kill, init, help)
-- Creates tmux sessions with a 4-pane layout: Claude Code, shell, file viewer, htop
-- The shell pane runs `bd ready` on startup if beads is detected, then is available for any commands
-- Adds one additional tmux window: beads viewer
+```
+bin/vamp (bash)                          sidebar/ (Rust/Ratatui)
+├── creates tmux session                 ├── runs in right tmux pane
+├── agent lifecycle (create/kill)        ├── reads .vamp/state.json
+├── worktree management                  ├── writes .vamp/commands.json
+├── state file writer                    ├── renders 6 tabs
+└── command watcher (bg loop)            └── keyboard controls
+```
 
-**Tmux Windows:**
-- Window 0 "main": 4-pane layout with Claude Code, shell, yazi, and htop
-- Window 1 "beads": beads issue viewer (`bv` if installed, simple dashboard fallback)
-- Window 2 "swarm": grid of Claude instances (when swarm mode active)
+**bin/vamp** - Main entry point. Bash script that:
+- Parses subcommands (list, attach, kill, init, agent, help)
+- Creates tmux sessions with a 2-pane layout: Claude Code (left) + sidebar (right)
+- Manages agent lifecycle: create/kill agents with git worktree isolation
+- Writes `.vamp/state.json` for sidebar to read
+- Runs background command watcher that processes sidebar commands
 
-**Main Window Panes:**
-- Pane 0: Claude Code (top left, 75%) - main work area
-- Pane 1: Shell (bottom left, 25%) - runs `bd ready` on startup if beads detected
-- Pane 2: File viewer/yazi (top right)
-- Pane 3: htop (bottom right)
+**sidebar/** - Rust/Ratatui sidebar application:
+- 6 tabs: players (agents), charts (git/files), beads (issues), setlist (activity), files (tree), metrics (system/claude)
+- Blue Note jazz aesthetic with warm color palette
+- Reads `.vamp/state.json` for agent data (polls mtime every 500ms)
+- Writes `.vamp/commands.json` for agent control
+- Keyboard: Tab/Shift-Tab cycles tabs, 1-6 direct select, A/X/f/p/r/R agent controls
+
+**Tmux Layout:**
+```
++---------------------------+------------------+
+|                           |   vamp-sidebar   |
+|      Claude Code          |   (Ratatui)      |
+|      (main agent)         |   6 tabs:        |
+|                           |   players/charts |
+|                           |   beads/setlist  |
+|                           |   files/metrics  |
++---------------------------+------------------+
+Left: 75%                   Right: 25%
+```
+Additional agents get their own tmux windows, each with a worktree.
+
+**Communication:**
+- `bin/vamp` writes `.vamp/state.json` → sidebar reads it
+- Sidebar writes `.vamp/commands.json` → bash command watcher reads it
+- Both use atomic writes (temp file + rename) to prevent races
 
 **lib/vamp-utils.sh** - Shell aliases and functions sourced in user's shell:
 - Launcher shortcuts: `v`, `vp`, `va`, `vk`, `vl`, `vin`
+- Agent shortcuts: `vag`, `vaa`, `val`, `vak`, `vam`
 - Beads shortcuts: `bds`, `bdl`, `bdn`, `bdp`, `bdcp`, `bdd`
 - Claude shortcuts: `ccr`, `ccc`, `ccs`, `cco`
 - Workflow helpers: `standup`, `eod`
@@ -85,19 +113,19 @@ Test files are in `tests/unit/` and `tests/integration/`. CI runs automatically 
 **install.sh** - Installer that:
 - Installs dependencies via brew/apt/dnf/pacman
 - Copies files to `~/.local/bin` and `~/.local/share/vamp`
+- Builds and installs sidebar binary (requires Rust/cargo)
 - Creates config at `~/.config/vamp/config`
 - Adds PATH and source lines to shell rc file
 
 ## Configuration
 
 User config lives at `~/.config/vamp/config`:
-- `VAMP_FILE_VIEWER` - yazi, lf, ranger, nnn
-- `VAMP_MONITOR` - htop, btop, glances
 - `VAMP_CLAUDE_CMD` - claude command
 - `VAMP_CLAUDE_FLAGS` - flags passed to all Claude instances (default: `--dangerously-skip-permissions`)
+- `VAMP_AGENT_CLAUDE_CMD` / `VAMP_AGENT_CODEX_CMD` / `VAMP_AGENT_CURSOR_CMD` - per-type agent commands
 - `VAMP_PROJECTS_DIR` - for project picker
 
-By default, all Claude Code instances launched by vamp (main pane and swarm workers) use `--dangerously-skip-permissions`. To disable this, set `VAMP_CLAUDE_FLAGS=""` in your config. To add other flags, set `VAMP_CLAUDE_FLAGS` to your desired flags (this replaces the default).
+By default, all Claude Code instances launched by vamp use `--dangerously-skip-permissions`. To disable this, set `VAMP_CLAUDE_FLAGS=""` in your config.
 
 ## Beads Integration
 
@@ -175,88 +203,61 @@ eod                    # End-of-day checkpoint prompt
 | `ss` | `session_start` | Start workflow |
 | `se` | `session_end` | End workflow |
 
-## Swarm Mode
+## Multi-Agent Mode
 
-Swarm mode enables running multiple Claude Code instances in parallel, each working on separate tasks with git worktree isolation.
+Multi-agent mode enables running multiple AI coding agents (Claude, Codex, Cursor) in parallel, each with git worktree isolation managed by the sidebar.
 
 ### Architecture
 
+**Agent Types:**
+- `claude` (BRASS) - Claude Code CLI
+- `codex` (KEYS) - Codex CLI
+- `cursor` (STRINGS) - Cursor CLI
+
 **Git Worktrees:**
-- Each worker gets its own directory: `.vamp-workers/worker-1`, `.vamp-workers/worker-2`, etc.
-- Each directory is a git worktree with its own branch: `swarm/worker-1`, `swarm/worker-2`, etc.
-- Changes are isolated until explicitly merged back to main
+- Each agent gets its own directory: `.vamp-agents/<name>/`
+- Each directory is a git worktree with its own branch: `agent/<name>`
+- The main agent works directly in the project directory (no worktree)
+- Changes are isolated until explicitly merged
 
-**Tmux Layout:**
-- Swarm creates a new window (Window 2) with a grid of panes
-- Grid adapts to worker count: 2 workers = 2x1, 4 workers = 2x2, 6 workers = 3x2, etc.
-- Each pane runs an independent Claude Code instance
+**Sidebar Tabs:**
+- **1:players** - Agent list grouped by type, controls (add/kill/pause/focus/restart)
+- **2:charts** - Git branches, remotes, worktrees, file changes with conflict detection
+- **3:beads** - Issue tracker (reads from beads via `bd list`)
+- **4:setlist** - Activity log of agent events
+- **5:files** - Project file tree with git status indicators
+- **6:metrics** - System load, memory, Claude usage stats, agent health
 
-**Beads Coordination:**
-- Workers share the same beads database via git sync
-- Each worker claims issues with `bd update <id> --status=in_progress`
-- Prevents duplicate work across workers
+### Workflow
 
-**Worker Isolation:**
-- Each worker receives a context prompt with explicit workspace boundaries
-- A `.vamp-worker` file is created in each worktree with isolation metadata
-- Workers are instructed to ONLY edit files within their worktree path
-- The main project directory is explicitly marked as forbidden
-- Workers can run `pwd` or `cat .vamp-worker` to verify their workspace
-
-### Swarm Workflow
-
-**Starting a swarm:**
+**Adding agents:**
 ```bash
-cd ~/Projects/my-app
-bd ready                    # Check available work
-vamp swarm -w 3             # Start 3 parallel workers
+vamp agent add claude       # Add a Claude agent
+vamp agent add codex        # Add a Codex agent
+# Or press 'A' in the sidebar Players tab
 ```
 
-**Worker initialization:**
-- Each worker starts in its worktree directory
-- Runs `bd ready` to show available issues
-- Starts Claude Code ready to work
-
-**During work:**
+**Monitoring:**
 ```bash
-# In each worker pane:
-bd update <id> --status=in_progress  # Claim an issue
-# ... Claude works on the task ...
-git add . && git commit -m "..."      # Commit to worker branch
-bd close <id>                          # Mark complete
+vamp agent list             # Show all agents
+# Or use the sidebar tabs for real-time status
 ```
 
-**Monitoring progress:**
+**Merging work:**
 ```bash
-vamp swarm --status         # Shows each worker's branch and commits
+vamp agent merge            # Merge agent branches to main
+vamp agent kill <id> --remove  # Kill and clean up agent
 ```
 
-**Finishing:**
-```bash
-vamp swarm --merge          # Merge all branches to main (interactive)
-vamp swarm --cleanup        # Remove worktrees, keep branches
-vamp swarm --finish         # Full cleanup: merge + cleanup + delete branches
-```
-
-### Swarm Shell Aliases
+### Agent Shell Aliases
 
 | Alias | Command | Description |
 |-------|---------|-------------|
-| `vs` | `vamp swarm` | Start swarm (4 workers) |
-| `vss` | `vamp swarm --status` | Check swarm status |
-| `vsf` | `vamp swarm --finish` | Finish and cleanup |
-
-### Conflict Resolution
-
-If a merge fails due to conflicts:
-1. Resolve conflicts manually in the main worktree
-2. Run `git commit` to complete the merge
-3. Continue with remaining branches
-
-Workers modifying the same files will create merge conflicts. Best practices:
-- Assign workers to different areas of the codebase
-- Use beads to coordinate work assignment
-- Commit frequently with small changes
+| `vag` | `vamp agent` | Agent commands |
+| `vaa` | `vamp agent add claude` | Add Claude agent |
+| `val` | `vamp agent list` | List agents |
+| `vak` | `vamp agent kill` | Kill agent |
+| `vam` | `vamp agent merge --all` | Merge all |
 
 ## Tmux Session Settings
 
@@ -266,18 +267,6 @@ Vamp configures each tmux session with:
 - Status bar showing `vamp v{VERSION} | HH:MM`
 
 **iTerm2 Requirement:** For mouse support, enable "Mouse reporting" in iTerm2 → Preferences → Profiles → Terminal.
-
-## Yazi File Viewer
-
-Yazi config at `~/.config/yazi/yazi.toml`:
-- Git integration enabled - shows file status indicators (M=modified, A=added, D=deleted, etc.)
-- Column ratio `[0, 2, 3]` - hides parent dir to maximize space in split pane
-- Line wrapping enabled for code preview
-
-**File openers:**
-- `Enter` or `o` - Opens in bat (syntax-highlighted viewer)
-- `Shift+O` - Menu to choose between bat, Cursor, or micro
-- `q` in bat/micro - Returns to yazi
 
 ## Versioning
 
@@ -290,5 +279,5 @@ Increment the version when adding features or fixes. The version displays in the
 
 ## Dependencies
 
-Required: tmux, Claude Code CLI
-Recommended: yazi, htop, fzf, jq, beads, bv (beads_viewer), bat
+Required: tmux, Claude Code CLI, Rust/cargo (for building sidebar)
+Recommended: jq, fzf, beads, bv (beads_viewer)

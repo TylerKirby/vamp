@@ -97,24 +97,18 @@ load '../helpers/test_helper'
 }
 
 # ============================================
-# Swarm Command Parsing
+# Agent Command Parsing
 # ============================================
 
-@test "args: swarm --help shows swarm help" {
-    run_vamp swarm --help
+@test "args: agent shows help with no subcommand" {
+    run_vamp agent
     assert_success
-    assert_output --partial "vamp swarm"
-    assert_output --partial "workers"
-    assert_output --partial "--status"
+    assert_output --partial "vamp agent add"
+    assert_output --partial "vamp agent list"
+    assert_output --partial "vamp agent kill"
 }
 
-@test "args: swarm -h shows swarm help" {
-    run_vamp swarm -h
-    assert_success
-    assert_output --partial "vamp swarm"
-}
-
-@test "args: swarm --status works" {
+@test "args: agent add requires type" {
     setup_temp_dir
     TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
     mkdir -p "$TEST_REPO_DIR"
@@ -123,12 +117,27 @@ load '../helpers/test_helper'
     echo "test" > README.md
     git add . && git commit -m "Initial"
 
-    run_vamp swarm --status
-    # Should succeed (status check)
+    run_vamp agent add claude test-agent
+    assert_success
+    assert_output --partial "Created agent"
+}
+
+@test "args: agent list works" {
+    setup_temp_dir
+    TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
+    mkdir -p "$TEST_REPO_DIR"
+    cd "$TEST_REPO_DIR"
+    git init --initial-branch=main
+    echo "test" > README.md
+    git add . && git commit -m "Initial"
+    mkdir -p .vamp
+    echo '{"version":"2.0.0","project":{},"agents":[],"totals":{"tokens":0,"cost_usd":0},"updated_at":""}' > .vamp/state.json
+
+    run_vamp agent list
     assert_success
 }
 
-@test "args: swarm --merge --yes works" {
+@test "args: agent kill works" {
     setup_temp_dir
     TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
     mkdir -p "$TEST_REPO_DIR"
@@ -137,12 +146,12 @@ load '../helpers/test_helper'
     echo "test" > README.md
     git add . && git commit -m "Initial"
 
-    run_vamp swarm --merge --yes
-    # Should succeed (no worktrees to merge)
+    run_vamp agent add claude test-agent
+    run_vamp agent kill test-agent --remove
     assert_success
 }
 
-@test "args: swarm --cleanup --yes works" {
+@test "args: agent merge works without agents" {
     setup_temp_dir
     TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
     mkdir -p "$TEST_REPO_DIR"
@@ -151,125 +160,7 @@ load '../helpers/test_helper'
     echo "test" > README.md
     git add . && git commit -m "Initial"
 
-    run_vamp swarm --cleanup --yes
-    # Should succeed (no worktrees to cleanup)
-    assert_success
-}
-
-@test "args: swarm -w accepts worker count" {
-    run_vamp swarm -w 2 --help
-    assert_success
-}
-
-@test "args: swarm --workers accepts worker count" {
-    run_vamp swarm --workers 3 --help
-    assert_success
-}
-
-@test "args: swarm --workers=N accepts worker count" {
-    run_vamp swarm --workers=4 --help
-    assert_success
-}
-
-@test "args: swarm -y is alias for --yes" {
-    setup_temp_dir
-    TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
-    mkdir -p "$TEST_REPO_DIR"
-    cd "$TEST_REPO_DIR"
-    git init --initial-branch=main
-    echo "test" > README.md
-    git add . && git commit -m "Initial"
-
-    run_vamp swarm --merge -y
-    assert_success
-}
-
-@test "args: swarm --force flag is recognized" {
-    setup_temp_dir
-    TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
-    mkdir -p "$TEST_REPO_DIR"
-    cd "$TEST_REPO_DIR"
-    git init --initial-branch=main
-    echo "test" > README.md
-    git add . && git commit -m "Initial"
-
-    run_vamp swarm --merge --force --yes
-    assert_success
-}
-
-@test "args: swarm --autostash flag is recognized" {
-    setup_temp_dir
-    TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
-    mkdir -p "$TEST_REPO_DIR"
-    cd "$TEST_REPO_DIR"
-    git init --initial-branch=main
-    echo "test" > README.md
-    git add . && git commit -m "Initial"
-
-    run_vamp swarm --merge --autostash --yes
-    assert_success
-}
-
-# ============================================
-# Worker Count Validation
-# ============================================
-
-@test "args: swarm rejects worker count 0" {
-    setup_temp_dir
-    TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
-    mkdir -p "$TEST_REPO_DIR"
-    cd "$TEST_REPO_DIR"
-    git init --initial-branch=main
-    echo "test" > README.md
-    git add . && git commit -m "Initial"
-
-    run_vamp swarm -w 0
-    assert_failure
-    assert_output --partial "Worker count must be 1-8"
-}
-
-@test "args: swarm rejects worker count > 8" {
-    setup_temp_dir
-    TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
-    mkdir -p "$TEST_REPO_DIR"
-    cd "$TEST_REPO_DIR"
-    git init --initial-branch=main
-    echo "test" > README.md
-    git add . && git commit -m "Initial"
-
-    run_vamp swarm -w 9
-    assert_failure
-    assert_output --partial "Worker count must be 1-8"
-}
-
-@test "args: swarm rejects non-numeric worker count" {
-    setup_temp_dir
-    TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
-    mkdir -p "$TEST_REPO_DIR"
-    cd "$TEST_REPO_DIR"
-    git init --initial-branch=main
-    echo "test" > README.md
-    git add . && git commit -m "Initial"
-
-    run_vamp swarm -w abc
-    assert_failure
-    assert_output --partial "Worker count must be 1-8"
-}
-
-# ============================================
-# Combined Flags
-# ============================================
-
-@test "args: swarm accepts multiple flags" {
-    setup_temp_dir
-    TEST_REPO_DIR="$TEST_TEMP_DIR/test-repo"
-    mkdir -p "$TEST_REPO_DIR"
-    cd "$TEST_REPO_DIR"
-    git init --initial-branch=main
-    echo "test" > README.md
-    git add . && git commit -m "Initial"
-
-    run_vamp swarm --merge --force --autostash --yes
+    run_vamp agent merge
     assert_success
 }
 

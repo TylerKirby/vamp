@@ -70,10 +70,17 @@ if [ -n "$SPECIFIC_FILE" ]; then
 elif [ "$TEST_FILTER" = "unit" ]; then
     TEST_PATHS="$SCRIPT_DIR/unit"
 elif [ "$TEST_FILTER" = "integration" ]; then
-    TEST_PATHS="$SCRIPT_DIR/integration"
+    if [ -d "$SCRIPT_DIR/integration" ]; then
+        TEST_PATHS="$SCRIPT_DIR/integration"
+    else
+        echo -e "${CYAN}No integration tests found${NC}"
+        exit 0
+    fi
 else
-    # Run all tests
-    TEST_PATHS="$SCRIPT_DIR/unit $SCRIPT_DIR/integration"
+    # Run all tests — only include directories that exist
+    TEST_PATHS=""
+    [ -d "$SCRIPT_DIR/unit" ] && TEST_PATHS="$SCRIPT_DIR/unit"
+    [ -d "$SCRIPT_DIR/integration" ] && TEST_PATHS="$TEST_PATHS $SCRIPT_DIR/integration"
 fi
 
 # Check if there are any test files

@@ -20,6 +20,14 @@ alias vl='vamp list'
 alias va='vamp attach'
 alias vk='vamp kill'
 alias vin='vamp init'
+alias vs='vamp sidebar'
+
+# Agent management
+alias vag='vamp agent'
+alias vaa='vamp agent add claude'
+alias val='vamp agent list'
+alias vak='vamp agent kill'
+alias vam='vamp agent merge --all'
 
 # Project picker with fzf
 vp() {
@@ -221,11 +229,21 @@ Launcher:
   va <name>      Attach to session
   vk <name>      Kill session
   vl             List sessions
+  vs             Restart sidebar
   vin            Init project
+
+Agent:
+  vag            Agent commands
+  vaa            Add Claude agent
+  val            List agents
+  vak <id>       Kill agent
+  vam            Merge agent branches
 
 Beads:
   bds            Ready tasks
   bdl            List all
+  bda            List all (incl. closed)
+  bdb            Blocked tasks
   bdip           In progress
   bdn <title>    New task
   bdp <title>    New P0 task
@@ -254,4 +272,7 @@ Workflow:
 EOF
 }
 
-echo "vamp utils loaded. Run 'vamp-help' for shortcuts."
+# Only print on interactive login (not in subshells/tmux panes)
+if [[ $- == *i* ]] && [ -z "$TMUX" ]; then
+    echo "vamp utils loaded. Run 'vamp-help' for shortcuts."
+fi
