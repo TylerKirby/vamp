@@ -221,23 +221,23 @@ EOF
 }
 
 @test "install_dependencies: shows OS detection" {
-    run_vamp setup --deps <<< "n"
+    run_vamp setup --deps <<< $'n\nn\nn\nn'
     # Should show either macOS or Linux
     [[ "$output" == *"macOS"* ]] || [[ "$output" == *"Linux"* ]]
 }
 
 @test "install_dependencies: checks for tmux" {
-    run_vamp setup --deps <<< "n"
+    run_vamp setup --deps <<< $'n\nn\nn\nn'
     assert_output --partial "tmux"
 }
 
 @test "install_dependencies: checks for beads" {
-    run_vamp setup --deps <<< "n"
+    run_vamp setup --deps <<< $'n\nn\nn\nn'
     assert_output --partial "Beads"
 }
 
 @test "install_dependencies: checks for beads_viewer" {
-    run_vamp setup --deps <<< "n"
+    run_vamp setup --deps <<< $'n\nn\nn\nn'
     assert_output --partial "beads_viewer"
 }
 
