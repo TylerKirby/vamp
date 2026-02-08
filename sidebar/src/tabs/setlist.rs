@@ -39,11 +39,7 @@ fn agent_color(agent: &str) -> ratatui::style::Color {
 /// Format timestamp for display (show HH:MM:SS from ISO timestamp)
 fn format_time(timestamp: &str) -> &str {
     // ISO format: 2026-02-07T10:30:00Z — extract HH:MM:SS
-    if timestamp.len() >= 19 {
-        &timestamp[11..19]
-    } else {
-        timestamp
-    }
+    timestamp.get(11..19).unwrap_or(timestamp)
 }
 
 pub fn render(frame: &mut Frame, area: Rect, app: &App) {
@@ -88,8 +84,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
 
         let detail = if entry.detail.is_empty() {
             String::new()
-        } else if entry.detail.len() > 30 {
-            format!(" {}..", &entry.detail[..28])
+        } else if entry.detail.chars().count() > 30 {
+            let truncated: String = entry.detail.chars().take(28).collect();
+            format!(" {}..", truncated)
         } else {
             format!(" {}", entry.detail)
         };

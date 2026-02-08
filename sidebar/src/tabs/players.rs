@@ -6,7 +6,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
-use crate::app::App;
+use crate::app::{App, FlatRow, build_flat_list};
 use crate::theme;
 
 /// Status icon for agent state
@@ -34,9 +34,9 @@ fn type_color(agent_type: &str) -> ratatui::style::Color {
 /// Group label for agent type
 fn type_label(agent_type: &str) -> &'static str {
     match agent_type {
-        "claude" => "BRASS",
-        "codex" => "KEYS",
-        "cursor" => "STRINGS",
+        "claude" => "CLAUDE",
+        "codex" => "CODEX",
+        "cursor" => "CURSOR",
         _ => "OTHER",
     }
 }
@@ -53,7 +53,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "  press [a] to add an agent",
+                "  press [A] to add an agent",
                 Style::default().fg(theme::DIM),
             )),
         ])
@@ -65,82 +65,75 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Group agents by type
-    let mut grouped: Vec<(&str, Vec<usize>)> = Vec::new();
-    let type_order = ["claude", "codex", "cursor"];
-
-    for t in &type_order {
-        let indices: Vec<usize> = agents
-            .iter()
-            .enumerate()
-            .filter(|(_, a)| a.agent_type == *t)
-            .map(|(i, _)| i)
-            .collect();
-        if !indices.is_empty() {
-            grouped.push((t, indices));
-        }
-    }
-
-    // Collect agents with unknown types
-    let known: Vec<&str> = type_order.to_vec();
-    let other_indices: Vec<usize> = agents
-        .iter()
-        .enumerate()
-        .filter(|(_, a)| !known.contains(&a.agent_type.as_str()))
-        .map(|(i, _)| i)
-        .collect();
-    if !other_indices.is_empty() {
-        grouped.push(("other", other_indices));
-    }
-
+    let flat = build_flat_list(agents);
     let mut items: Vec<ListItem> = Vec::new();
-    let mut flat_index = 0;
 
-    for (agent_type, indices) in &grouped {
-        // Group header
-        let color = type_color(agent_type);
-        items.push(ListItem::new(Line::from(Span::styled(
-            format!("  {} {}", "\u{25b8}", type_label(agent_type)),
-            Style::default().fg(color).add_modifier(Modifier::BOLD),
-        ))));
-        flat_index += 1;
+    for (flat_index, row) in flat.iter().enumerate() {
+        match row {
+            FlatRow::Header(agent_type) => {
+                let color = type_color(agent_type);
+                items.push(ListItem::new(Line::from(Span::styled(
+                    format!("  {} {}", "\u{25b8}", type_label(agent_type)),
+                    Style::default().fg(color).add_modifier(Modifier::BOLD),
+                ))));
+            }
+            FlatRow::Agent(idx) => {
+                let agent = &agents[*idx];
+                let icon = status_icon(&agent.status);
+                let status_color = match agent.status.as_str() {
+                    "running" => theme::GREEN,
+                    "waiting" => theme::YELLOW,
+                    "paused" => theme::DIM,
+                    "error" => theme::RED,
+                    _ => theme::DIM,
+                };
 
-        for &idx in indices {
-            let agent = &agents[idx];
-            let icon = status_icon(&agent.status);
-            let status_color = match agent.status.as_str() {
-                "running" => theme::GREEN,
-                "waiting" => theme::YELLOW,
-                "paused" => theme::DIM,
-                "error" => theme::RED,
-                _ => theme::DIM,
-            };
+                let task_str = if agent.task.is_empty() {
+                    String::new()
+                } else {
+                    format!(" {}", agent.task)
+                };
 
-            let task_str = if agent.task.is_empty() {
-                String::new()
-            } else {
-                format!(" {}", agent.task)
-            };
+                // Check if this agent is the focused one
+                let focused = &app.state.focused_agent;
+                let is_focused = focused == &agent.id
+                    || (focused.is_empty() && agent.id == "main");
 
-            let style = if flat_index == app.selected_index + 1 {
-                Style::default().fg(theme::BRIGHT).bg(theme::BG_SEL)
-            } else {
-                Style::default().fg(theme::FG)
-            };
+                let style = if flat_index == app.selected_index + 1 {
+                    let mut s = Style::default().fg(theme::BRIGHT).bg(theme::BG_SEL);
+                    if is_focused { s = s.add_modifier(Modifier::BOLD); }
+                    s
+                } else {
+                    let mut s = Style::default().fg(theme::FG);
+                    if is_focused { s = s.add_modifier(Modifier::BOLD); }
+                    s
+                };
 
-            items.push(ListItem::new(Line::from(vec![
-                Span::styled(format!("    {} ", icon), Style::default().fg(status_color)),
-                Span::styled(&agent.name, style),
-                Span::styled(task_str, Style::default().fg(theme::DIM)),
-            ])));
-            flat_index += 1;
+                // Star indicator for focused agent
+                let focus_indicator = if is_focused {
+                    Span::styled("\u{2605} ", Style::default().fg(theme::BRASS))
+                } else {
+                    Span::styled("  ", Style::default())
+                };
+
+                items.push(ListItem::new(Line::from(vec![
+                    Span::styled(format!("  {} ", icon), Style::default().fg(status_color)),
+                    focus_indicator,
+                    Span::styled(&agent.name, style),
+                    Span::styled(task_str, Style::default().fg(theme::DIM)),
+                ])));
+            }
+            FlatRow::Spacer => {
+                items.push(ListItem::new(Line::from("")));
+            }
         }
-
-        // Spacer after group
-        items.push(ListItem::new(Line::from("")));
-        flat_index += 1;
     }
 
-    let list = List::new(items).block(Block::default().borders(Borders::NONE));
+    // Scroll: keep selected item visible
+    let visible = area.height as usize;
+    let offset = crate::app::scroll_offset(app.selected_index, visible);
+    let visible_items: Vec<ListItem> = items.into_iter().skip(offset).collect();
+
+    let list = List::new(visible_items).block(Block::default().borders(Borders::NONE));
     frame.render_widget(list, area);
 }

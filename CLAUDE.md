@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Vamp is a terminal-native development environment for Claude Code. It creates a 2-panel tmux workspace: Claude Code main stage (left) + a Ratatui sidebar (right) that manages multiple agents across 4 tabs with a "Blue Note Sessions" jazz aesthetic.
+Vamp is a terminal-native development environment for Claude Code. It creates a 2-panel tmux workspace: Claude Code main stage (left) + a Ratatui sidebar (right) that manages multiple agents across 6 tabs with a "Blue Note Sessions" jazz aesthetic.
 
 ## Commands
 
@@ -66,7 +66,7 @@ bin/vamp (bash)                          sidebar/ (Rust/Ratatui)
 ├── creates tmux session                 ├── runs in right tmux pane
 ├── agent lifecycle (create/kill)        ├── reads .vamp/state.json
 ├── worktree management                  ├── writes .vamp/commands.json
-├── state file writer                    ├── renders 4 tabs
+├── state file writer                    ├── renders 6 tabs
 └── command watcher (bg loop)            └── keyboard controls
 ```
 
@@ -78,20 +78,21 @@ bin/vamp (bash)                          sidebar/ (Rust/Ratatui)
 - Runs background command watcher that processes sidebar commands
 
 **sidebar/** - Rust/Ratatui sidebar application:
-- 4 tabs: players (agents), charts (files), beads (issues), setlist (activity)
+- 6 tabs: players (agents), charts (git/files), beads (issues), setlist (activity), files (tree), metrics (system/claude)
 - Blue Note jazz aesthetic with warm color palette
 - Reads `.vamp/state.json` for agent data (polls mtime every 500ms)
 - Writes `.vamp/commands.json` for agent control
-- Keyboard: Tab/Shift-Tab cycles tabs, 1-4 direct select, a/x/f/p/r agent controls
+- Keyboard: Tab/Shift-Tab cycles tabs, 1-6 direct select, A/X/f/p/r/R agent controls
 
 **Tmux Layout:**
 ```
 +---------------------------+------------------+
 |                           |   vamp-sidebar   |
 |      Claude Code          |   (Ratatui)      |
-|      (main agent)         |   4 tabs:        |
+|      (main agent)         |   6 tabs:        |
 |                           |   players/charts |
 |                           |   beads/setlist  |
+|                           |   files/metrics  |
 +---------------------------+------------------+
 Left: 75%                   Right: 25%
 ```
@@ -221,9 +222,11 @@ Multi-agent mode enables running multiple AI coding agents (Claude, Codex, Curso
 
 **Sidebar Tabs:**
 - **1:players** - Agent list grouped by type, controls (add/kill/pause/focus/restart)
-- **2:charts** - File changes across all agent worktrees, conflict detection
+- **2:charts** - Git branches, remotes, worktrees, file changes with conflict detection
 - **3:beads** - Issue tracker (reads from beads via `bd list`)
 - **4:setlist** - Activity log of agent events
+- **5:files** - Project file tree with git status indicators
+- **6:metrics** - System load, memory, Claude usage stats, agent health
 
 ### Workflow
 
@@ -231,7 +234,7 @@ Multi-agent mode enables running multiple AI coding agents (Claude, Codex, Curso
 ```bash
 vamp agent add claude       # Add a Claude agent
 vamp agent add codex        # Add a Codex agent
-# Or press 'a' in the sidebar Players tab
+# Or press 'A' in the sidebar Players tab
 ```
 
 **Monitoring:**

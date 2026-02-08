@@ -8,13 +8,14 @@
 #        vamp kill [session-name]
 #        vamp list
 
-set -e
+# Disable errexit for _watcher subcommand (must survive transient errors)
+if [[ "${1:-}" != "_watcher" ]]; then
+    set -e
+fi
 
 VAMP_VERSION="2.0.0"
 
 # Configuration - customize via ~/.config/vamp/config or env vars
-FILE_VIEWER="${VAMP_FILE_VIEWER:-yazi}"
-MONITOR_CMD="${VAMP_MONITOR:-htop}"
 CLAUDE_CMD="${VAMP_CLAUDE_CMD:-claude}"
 CLAUDE_FLAGS="${VAMP_CLAUDE_FLAGS:---dangerously-skip-permissions}"
 PROJECTS_DIR="${VAMP_PROJECTS_DIR:-$HOME/Projects}"
@@ -316,6 +317,7 @@ ${YELLOW}USAGE:${NC}
     vamp killall           Kill all vamp sessions
     vamp init              Initialize project with beads + CLAUDE.md
     vamp setup             Install beads hooks for Claude Code + git
+    vamp sidebar            Restart the sidebar in current session
     vamp doctor            Validate setup and show recommendations
     vamp update            Update vamp to latest GitHub release
     vamp help              Show this help
@@ -338,13 +340,15 @@ ${YELLOW}SIDEBAR TABS:${NC}
     2:charts               File changes across agents
     3:beads                Issue tracker
     4:setlist              Activity log
+    5:files                Project file tree with git status
+    6:metrics              System, Claude usage, and agent health
 
 ${YELLOW}KEYBINDINGS:${NC}
     Ctrl-b + arrows        Navigate panes
     Ctrl-b + z             Zoom pane (toggle fullscreen)
     Ctrl-b + d             Detach (session keeps running)
     Tab / Shift-Tab        Cycle sidebar tabs
-    1-4                    Direct tab select (in sidebar)
+    1-6                    Direct tab select (in sidebar)
 
 ${YELLOW}MOUSE:${NC}
     Scroll wheel           Scroll pane content
@@ -532,6 +536,103 @@ EOF
         echo -e "  ${DIM}○${NC} CLAUDE.md exists"
     fi
     
+    # AGENTS.md
+    if [ ! -f "AGENTS.md" ]; then
+        read -p "Create AGENTS.md for multi-agent coordination? [Y/n] " agents_confirm
+        if [[ ! "$agents_confirm" =~ ^[Nn]$ ]]; then
+            cat > AGENTS.md << 'AGENTS_EOF'
+# Multi-Agent Coordination
+
+This project uses [vamp](https://github.com/TylerKirby/vamp) for multi-agent development with git worktree isolation.
+
+## Worktree Architecture
+
+Each agent gets its own isolated directory and branch:
+
+```
+project/
+├── .vamp-agents/
+│   ├── claude-1/    → branch: agent/claude-1
+│   ├── codex-1/     → branch: agent/codex-1
+│   └── cursor-1/    → branch: agent/cursor-1
+├── .vamp/           → state + IPC files
+└── (main project)   → main branch
+```
+
+- The main agent works directly in the project directory (no worktree)
+- Additional agents each get a git worktree in `.vamp-agents/<name>/`
+- Each worktree has its own branch: `agent/<name>`
+- Changes are isolated until explicitly merged
+
+## Beads Sync Branch
+
+**CRITICAL**: If using beads for issue tracking, ensure the sync branch is configured:
+```bash
+bd config set sync.branch beads-sync
+```
+
+⚠️ **Never sync beads to main** — this can revert your code changes. Always use a dedicated sync branch.
+
+## Agent Workflow
+
+**Adding agents:**
+```bash
+vamp agent add claude       # Add a Claude agent
+vamp agent add codex        # Add a Codex agent
+vamp agent add cursor       # Add a Cursor agent
+```
+Or press `[A]` in the sidebar Players tab.
+
+**Monitoring:**
+- Use the sidebar tabs (players/charts/beads/setlist)
+- `vamp agent list` from the shell
+
+**Renaming agents:**
+Press `[R]` in the sidebar Players tab to rename the selected agent.
+
+**Merging work:**
+```bash
+vamp agent merge            # Interactive merge of agent branches
+vamp agent merge --all      # Auto-merge all agent branches
+```
+Or press `[m]` in the sidebar Charts tab.
+
+## Naming Conventions
+
+- Agents are auto-named by type: `claude-1`, `codex-1`, etc.
+- Rename via sidebar `[R]` key for clarity (e.g., `auth-feature`, `api-refactor`)
+- Agent IDs (used internally) remain unchanged after rename
+
+## Merge Strategy
+
+- Each agent branch is merged independently into the main branch
+- If a merge conflicts, it is aborted and flagged in the sidebar Charts tab
+- Resolve conflicts manually, then re-merge
+- Use `vamp agent kill <id> --remove` to clean up finished agents (deletes worktree + branch)
+AGENTS_EOF
+            echo -e "  ${GREEN}✓${NC} Created AGENTS.md"
+        fi
+    else
+        echo -e "  ${DIM}○${NC} AGENTS.md exists"
+    fi
+
+    # Append multi-agent section to CLAUDE.md if Claude Code is available
+    if [ -f "CLAUDE.md" ] && command -v claude &>/dev/null; then
+        if ! grep -q "Multi-Agent" CLAUDE.md 2>/dev/null; then
+            cat >> CLAUDE.md << 'MULTI_AGENT_EOF'
+
+## Multi-Agent Mode
+
+This project supports multi-agent development via vamp. See [AGENTS.md](AGENTS.md) for:
+- Worktree architecture and isolation model
+- Agent workflow (add, monitor, rename, merge)
+- Beads sync branch configuration (CRITICAL)
+- Merge strategy and conflict resolution
+MULTI_AGENT_EOF
+            echo -e "  ${GREEN}✓${NC} Added multi-agent section to CLAUDE.md"
+        fi
+    fi
+
     # .gitignore
     if ! grep -q ".beads-cache" .gitignore 2>/dev/null; then
         echo -e "\n# Beads cache\n.beads-cache/" >> .gitignore
@@ -905,10 +1006,7 @@ install_dependencies() {
     echo ""
     echo -e "${BLUE}Recommended tools:${NC}"
 
-    check_cmd yazi || echo -e "  ${YELLOW}○${NC} yazi - Install: $pkg_cmd yazi"
-    check_cmd htop || echo -e "  ${YELLOW}○${NC} htop - Install: $pkg_cmd htop"
     check_cmd fzf || echo -e "  ${YELLOW}○${NC} fzf - Install: $pkg_cmd fzf"
-    check_cmd jq || echo -e "  ${YELLOW}○${NC} jq - Install: $pkg_cmd jq"
 
     # ============================================
     # Beads (AI-native issue tracking)
@@ -1102,7 +1200,7 @@ doctor() {
     elif [ -x "$HOME/.local/bin/vamp-sidebar" ]; then
         echo -e "  ${GREEN}✓${NC} vamp-sidebar installed ($HOME/.local/bin/vamp-sidebar)"
     else
-        echo -e "  ${YELLOW}○${NC} vamp-sidebar not installed (optional, provides rich sidebar UI)"
+        echo -e "  ${RED}✗${NC} vamp-sidebar not installed (required for agent management UI)"
         warnings+=("cd sidebar && cargo build --release && cp target/release/vamp-sidebar ~/.local/bin/")
     fi
 
@@ -1233,7 +1331,7 @@ AGENT_CLAUDE_CMD="${VAMP_AGENT_CLAUDE_CMD:-$CLAUDE_CMD}"
 AGENT_CLAUDE_FLAGS="${VAMP_AGENT_CLAUDE_FLAGS:-$CLAUDE_FLAGS}"
 AGENT_CODEX_CMD="${VAMP_AGENT_CODEX_CMD:-codex}"
 AGENT_CODEX_FLAGS="${VAMP_AGENT_CODEX_FLAGS:-}"
-AGENT_CURSOR_CMD="${VAMP_AGENT_CURSOR_CMD:-cursor}"
+AGENT_CURSOR_CMD="${VAMP_AGENT_CURSOR_CMD:-cursor-agent}"
 AGENT_CURSOR_FLAGS="${VAMP_AGENT_CURSOR_FLAGS:---cli}"
 
 # Initialize .vamp directory and state file
@@ -1247,23 +1345,18 @@ init_vamp_dir() {
         echo -e "\n# Vamp state\n$VAMP_DIR/\n$AGENTS_DIR/" >> "$project_dir/.gitignore"
     fi
 
-    # Create initial state file if it doesn't exist
+    # Create initial state file if it doesn't exist (atomic write)
     if [ ! -f "$project_dir/$VAMP_DIR/state.json" ]; then
         local project_name=$(basename "$project_dir")
         local session_name="vamp-$(echo "$project_name" | tr '.:' '-')"
-        cat > "$project_dir/$VAMP_DIR/state.json" << EOF
-{
-  "version": "2.0.0",
-  "project": {
-    "name": "$project_name",
-    "path": "$project_dir",
-    "session": "$session_name"
-  },
-  "agents": [],
-  "totals": {"tokens": 0, "cost_usd": 0},
-  "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-}
-EOF
+        local tmp="$project_dir/$VAMP_DIR/state.json.tmp"
+        jq -nc \
+            --arg name "$project_name" \
+            --arg path "$project_dir" \
+            --arg session "$session_name" \
+            --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            '{version:"2.0.0",project:{name:$name,path:$path,session:$session},agents:[],focused_agent:"main",totals:{tokens:0,cost_usd:0},updated_at:$ts}' \
+            > "$tmp" && mv "$tmp" "$project_dir/$VAMP_DIR/state.json"
     fi
 }
 
@@ -1276,10 +1369,17 @@ generate_agent_name() {
     local count=1
 
     if [ -f "$state_file" ] && command -v jq &>/dev/null; then
-        count=$(jq "[.agents[] | select(.type == \"$agent_type\")] | length + 1" "$state_file" 2>/dev/null || echo "1")
+        count=$(jq --arg t "$agent_type" '[.agents[] | select(.type == $t)] | length + 1' "$state_file" 2>/dev/null || echo "1")
     fi
 
-    echo "${agent_type}-${count}"
+    # Skip names that conflict with existing worktrees or branches
+    local name="${agent_type}-${count}"
+    while [ -d "$project_dir/$AGENTS_DIR/$name" ] || git show-ref --verify --quiet "refs/heads/agent/$name" 2>/dev/null; do
+        ((count++))
+        name="${agent_type}-${count}"
+    done
+
+    echo "$name"
 }
 
 # Get agent command and flags for a given type
@@ -1289,8 +1389,29 @@ get_agent_cmd() {
         claude) echo "$AGENT_CLAUDE_CMD $AGENT_CLAUDE_FLAGS" ;;
         codex)  echo "$AGENT_CODEX_CMD $AGENT_CODEX_FLAGS" ;;
         cursor) echo "$AGENT_CURSOR_CMD $AGENT_CURSOR_FLAGS" ;;
-        *)      echo "$AGENT_CLAUDE_CMD $AGENT_CLAUDE_FLAGS" ;;
+        *)
+            log_debug "get_agent_cmd: unknown type '$agent_type', falling back to claude"
+            echo "$AGENT_CLAUDE_CMD $AGENT_CLAUDE_FLAGS"
+            ;;
     esac
+}
+
+# Validate agent name — only allow safe characters
+# Usage: validate_agent_name <name>
+validate_agent_name() {
+    local name="$1"
+    if [ -z "$name" ]; then
+        return 0  # empty is OK (will be auto-generated)
+    fi
+    if [[ ! "$name" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+        show_error "Invalid agent name: $name" "Names may only contain letters, numbers, dots, hyphens, and underscores"
+        return 1
+    fi
+    if [ "${#name}" -gt 64 ]; then
+        show_error "Agent name too long: $name" "Names must be 64 characters or fewer"
+        return 1
+    fi
+    return 0
 }
 
 # Create a new agent with worktree isolation
@@ -1311,6 +1432,9 @@ agent_create() {
             return 1
             ;;
     esac
+
+    # Validate agent name
+    validate_agent_name "$agent_name" || return 1
 
     # Validate git repo
     if ! git rev-parse --git-dir &>/dev/null; then
@@ -1377,14 +1501,17 @@ agent_spawn() {
 
     local agent_cmd=$(get_agent_cmd "$agent_type")
 
-    # Create new tmux window for this agent
-    tmux new-window -t "$session_name" -n "$agent_name" -c "$worktree"
+    # Create new tmux window for this agent (detached so main stays visible)
+    tmux new-window -d -t "$session_name" -n "$agent_name" -c "$worktree"
 
-    # Start the agent
+    # Start the agent (escape single quotes in variables to prevent shell injection)
+    local safe_worktree="${worktree//\'/\'\\\'\'}"
+    local safe_task="${task//\'/\'\\\'\'}"
+    local safe_name="${agent_name//\'/\'\\\'\'}"
     if [ -n "$task" ]; then
-        tmux send-keys -t "$session_name:$agent_name" "cd '$worktree' && clear && echo 'Agent: $agent_name ($agent_type) → Task: $task' && $agent_cmd 'You are agent $agent_name. Read .vamp-agent for context. Your task: $task'" Enter
+        tmux send-keys -t "$session_name:$agent_name" "cd '${safe_worktree}' && clear && echo 'Agent: ${safe_name} (${agent_type})' && ${agent_cmd} 'You are agent ${safe_name}. Read .vamp-agent for context. Your task: ${safe_task}'" Enter
     else
-        tmux send-keys -t "$session_name:$agent_name" "cd '$worktree' && clear && echo 'Agent: $agent_name ($agent_type)' && $agent_cmd" Enter
+        tmux send-keys -t "$session_name:$agent_name" "cd '${safe_worktree}' && clear && echo 'Agent: ${safe_name} (${agent_type})' && ${agent_cmd}" Enter
     fi
 
     log_debug "agent_spawn: $agent_name spawned in $session_name:$agent_name"
@@ -1400,6 +1527,12 @@ agent_kill() {
 
     local project_name=$(basename "$project_dir")
     local session_name="vamp-$(echo "$project_name" | tr '.:' '-')"
+
+    # If this agent is focused, swap back to main first
+    local current=$(state_get_focused_agent "$project_dir")
+    if [ "$current" = "$agent_id" ]; then
+        agent_focus "main"
+    fi
 
     # Kill tmux window
     if tmux has-session -t "$session_name" 2>/dev/null; then
@@ -1433,7 +1566,7 @@ agent_pause() {
     local state_file="$project_dir/$VAMP_DIR/state.json"
 
     if [ -f "$state_file" ] && command -v jq &>/dev/null; then
-        local pid=$(jq -r ".agents[] | select(.id == \"$agent_id\") | .pid" "$state_file" 2>/dev/null)
+        local pid=$(jq -r --arg id "$agent_id" '.agents[] | select(.id == $id) | .pid' "$state_file" 2>/dev/null)
         if [ -n "$pid" ] && [ "$pid" != "0" ] && [ "$pid" != "null" ]; then
             kill -STOP "$pid" 2>/dev/null && echo -e "  ${GREEN}✓${NC} Paused agent: $agent_id"
             state_update_agent_status "$project_dir" "$agent_id" "paused"
@@ -1450,7 +1583,7 @@ agent_resume() {
     local state_file="$project_dir/$VAMP_DIR/state.json"
 
     if [ -f "$state_file" ] && command -v jq &>/dev/null; then
-        local pid=$(jq -r ".agents[] | select(.id == \"$agent_id\") | .pid" "$state_file" 2>/dev/null)
+        local pid=$(jq -r --arg id "$agent_id" '.agents[] | select(.id == $id) | .pid' "$state_file" 2>/dev/null)
         if [ -n "$pid" ] && [ "$pid" != "0" ] && [ "$pid" != "null" ]; then
             kill -CONT "$pid" 2>/dev/null && echo -e "  ${GREEN}✓${NC} Resumed agent: $agent_id"
             state_update_agent_status "$project_dir" "$agent_id" "running"
@@ -1460,18 +1593,28 @@ agent_resume() {
     fi
 }
 
-# Focus on an agent's tmux window
+# Focus on an agent by swapping its pane into the main window's left pane
 agent_focus() {
-    local agent_id="$1"
+    local target_id="$1"
     local project_dir="$(pwd)"
     local project_name=$(basename "$project_dir")
     local session_name="vamp-$(echo "$project_name" | tr '.:' '-')"
 
-    if tmux has-session -t "$session_name" 2>/dev/null; then
-        tmux select-window -t "$session_name:$agent_id" 2>/dev/null && \
-            echo -e "  ${GREEN}✓${NC} Focused: $agent_id" || \
-            echo -e "  ${RED}✗${NC} Window not found: $agent_id"
+    tmux has-session -t "$session_name" 2>/dev/null || return 1
+
+    local current=$(state_get_focused_agent "$project_dir")
+    [ "$target_id" = "$current" ] && return 0
+
+    # Restore current occupant back to its own window
+    if [ "$current" != "main" ]; then
+        tmux swap-pane -s "$session_name:main.0" -t "$session_name:${current}.0" 2>/dev/null || true
     fi
+    # Bring target into the main window's left pane
+    if [ "$target_id" != "main" ]; then
+        tmux swap-pane -s "$session_name:${target_id}.0" -t "$session_name:main.0" 2>/dev/null || return 1
+    fi
+
+    state_set_focused_agent "$project_dir" "$target_id"
 }
 
 # Restart an agent
@@ -1481,11 +1624,16 @@ agent_restart() {
     local state_file="$project_dir/$VAMP_DIR/state.json"
 
     if [ -f "$state_file" ] && command -v jq &>/dev/null; then
-        local agent_type=$(jq -r ".agents[] | select(.id == \"$agent_id\") | .type" "$state_file" 2>/dev/null)
-        local worktree=$(jq -r ".agents[] | select(.id == \"$agent_id\") | .worktree" "$state_file" 2>/dev/null)
-        local task=$(jq -r ".agents[] | select(.id == \"$agent_id\") | .task" "$state_file" 2>/dev/null)
+        local agent_type=$(jq -r --arg id "$agent_id" '.agents[] | select(.id == $id) | .type' "$state_file" 2>/dev/null)
+        local worktree=$(jq -r --arg id "$agent_id" '.agents[] | select(.id == $id) | .worktree' "$state_file" 2>/dev/null)
+        local task=$(jq -r --arg id "$agent_id" '.agents[] | select(.id == $id) | .task' "$state_file" 2>/dev/null)
         local project_name=$(basename "$project_dir")
         local session_name="vamp-$(echo "$project_name" | tr '.:' '-')"
+
+        # Save focus state and restore main if this agent was focused
+        local was_focused=false
+        local current=$(state_get_focused_agent "$project_dir")
+        [ "$current" = "$agent_id" ] && was_focused=true && agent_focus "main"
 
         # Kill existing window
         tmux kill-window -t "$session_name:$agent_id" 2>/dev/null || true
@@ -1495,6 +1643,9 @@ agent_restart() {
             agent_spawn "$agent_id" "$agent_type" "$worktree" "$session_name" "$task" "$project_dir"
             state_update_agent_status "$project_dir" "$agent_id" "running"
             echo -e "  ${GREEN}✓${NC} Restarted agent: $agent_id"
+
+            # Restore focus if this agent was previously focused
+            [ "$was_focused" = true ] && agent_focus "$agent_id"
         fi
     fi
 }
@@ -1556,10 +1707,10 @@ agent_merge() {
     fi
 
     echo -e "${CYAN}Agent branches to merge into $main_branch:${NC}"
-    echo "$branches" | while read -r branch; do
+    while read -r branch; do
         local ahead=$(git rev-list --count "$main_branch".."$branch" 2>/dev/null || echo "0")
         echo -e "  $branch ($ahead commits)"
-    done
+    done <<< "$branches"
     echo ""
 
     if [ "$merge_all" != "--all" ]; then
@@ -1569,7 +1720,7 @@ agent_merge() {
 
     local merged=0
     local failed=0
-    echo "$branches" | while read -r branch; do
+    while read -r branch; do
         if git merge --no-edit "$branch" 2>/dev/null; then
             echo -e "  ${GREEN}✓${NC} Merged $branch"
             ((merged++))
@@ -1578,10 +1729,14 @@ agent_merge() {
             git merge --abort 2>/dev/null
             ((failed++))
         fi
-    done
+    done <<< "$branches"
 
     echo ""
-    echo -e "${GREEN}Merge complete${NC}"
+    if [ "$failed" -gt 0 ]; then
+        echo -e "${YELLOW}Merge complete: $merged merged, $failed conflicts${NC}"
+    else
+        echo -e "${GREEN}Merge complete: $merged merged${NC}"
+    fi
 }
 
 # ============================================
@@ -1607,6 +1762,7 @@ state_add_agent() {
     local session_name="vamp-$(echo "$project_name" | tr '.:' '-')"
 
     local tmp="$state_file.tmp"
+    # Remove existing agent with same id first (prevent duplicates)
     jq --arg id "$agent_name" \
        --arg name "$agent_name" \
        --arg type "$agent_type" \
@@ -1615,7 +1771,8 @@ state_add_agent() {
        --arg tmux_window "$agent_name" \
        --arg task "$task" \
        --arg now "$now" \
-       '.agents += [{
+       '(.agents = [.agents[] | select(.id != $id)]) |
+       .agents += [{
          "id": $id,
          "name": $name,
          "type": $type,
@@ -1667,6 +1824,28 @@ state_update_agent_status() {
        "$state_file" > "$tmp" && mv "$tmp" "$state_file"
 }
 
+# Get the currently focused agent from state
+state_get_focused_agent() {
+    local project_dir="$1"
+    local state_file="$project_dir/$VAMP_DIR/state.json"
+    if [ ! -f "$state_file" ] || ! command -v jq &>/dev/null; then
+        echo "main"; return 0
+    fi
+    local focused=$(jq -r '.focused_agent // "main"' "$state_file" 2>/dev/null)
+    [ -z "$focused" ] || [ "$focused" = "null" ] && focused="main"
+    echo "$focused"
+}
+
+# Set the focused agent in state
+state_set_focused_agent() {
+    local project_dir="$1" agent_id="$2"
+    local state_file="$project_dir/$VAMP_DIR/state.json"
+    if [ ! -f "$state_file" ] || ! command -v jq &>/dev/null; then return 0; fi
+    local tmp="$state_file.tmp"
+    jq --arg agent "$agent_id" --arg now "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+       '.focused_agent = $agent | .updated_at = $now' "$state_file" > "$tmp" && mv "$tmp" "$state_file"
+}
+
 # Refresh state from tmux (detect dead agents)
 state_refresh() {
     local project_dir="${1:-$(pwd)}"
@@ -1692,6 +1871,64 @@ state_refresh() {
             state_update_agent_status "$project_dir" "$agent_id" "stopped"
         fi
     done <<< "$agent_ids"
+
+    # If the focused agent's window is gone, reset focus to main
+    local current_focused=$(state_get_focused_agent "$project_dir")
+    if [ "$current_focused" != "main" ]; then
+        if ! echo "$windows" | grep -q "^${current_focused}$"; then
+            state_set_focused_agent "$project_dir" "main"
+        fi
+    fi
+}
+
+# ============================================
+# Sidebar restart
+# ============================================
+
+# Restart the sidebar in the current vamp session.
+# Detects the session from PWD, finds the sidebar pane, kills any existing
+# process there, and relaunches the sidebar binary.
+restart_sidebar() {
+    local project_dir="${1:-$(pwd)}"
+    project_dir="$(cd "$project_dir" && pwd)"
+
+    # Detect sidebar binary
+    local sidebar_cmd=""
+    if command -v vamp-sidebar &>/dev/null; then
+        sidebar_cmd="vamp-sidebar"
+    elif [ -x "$HOME/.local/bin/vamp-sidebar" ]; then
+        sidebar_cmd="$HOME/.local/bin/vamp-sidebar"
+    fi
+
+    if [ -z "$sidebar_cmd" ]; then
+        echo -e "${RED}Error:${NC} vamp-sidebar binary not found"
+        echo "Build with: cd sidebar && cargo build --release && cp target/release/vamp-sidebar ~/.local/bin/"
+        return 1
+    fi
+
+    # Find the vamp session for this project
+    local project_name=$(basename "$project_dir")
+    local session_name="vamp-$(echo "$project_name" | tr '.:' '-')"
+
+    if ! tmux has-session -t "$session_name" 2>/dev/null; then
+        echo -e "${RED}Error:${NC} No vamp session '$session_name' found"
+        echo "Start one with: vamp $project_dir"
+        return 1
+    fi
+
+    local state_file="$project_dir/$VAMP_DIR/state.json"
+
+    # Kill whatever is in the sidebar pane (pane 0.1) and restart
+    tmux send-keys -t "$session_name:main.1" C-c 2>/dev/null || true
+    sleep 0.3
+    tmux send-keys -t "$session_name:main.1" "q" 2>/dev/null || true
+    sleep 0.3
+    tmux send-keys -t "$session_name:main.1" "$sidebar_cmd --state-file '$state_file'" Enter
+
+    echo -e "${GREEN}✓${NC} Sidebar restarted in session $session_name"
+
+    # Also ensure watcher is still running
+    ensure_watcher "$project_dir" "$session_name"
 }
 
 # ============================================
@@ -1717,71 +1954,154 @@ update_files_data() {
 
     while read -r agent_id; do
         [ -z "$agent_id" ] && continue
-        local worktree=$(jq -r ".agents[] | select(.id == \"$agent_id\") | .worktree" "$state_file" 2>/dev/null)
+        local worktree=$(jq -r --arg id "$agent_id" '.agents[] | select(.id == $id) | .worktree' "$state_file" 2>/dev/null)
         [ -z "$worktree" ] || [ "$worktree" = "null" ] && continue
         [ -d "$worktree" ] || continue
 
-        local status=$(git -C "$worktree" status --porcelain 2>/dev/null)
-        while IFS= read -r line; do
-            [ -z "$line" ] && continue
-            local st="${line:0:2}"
-            local file="${line:3}"
+        local status=$(git -C "$worktree" status --porcelain -z 2>/dev/null)
+        while IFS= read -r -d '' entry; do
+            [ -z "$entry" ] && continue
+            local st="${entry:0:2}"
+            local file="${entry:3}"
             # Normalize status
             st=$(echo "$st" | tr -d ' ')
             [ -z "$st" ] && st="?"
-            all_files+=("$file|$agent_id|$st")
+            all_files+=("$(printf '%s\t%s\t%s' "$file" "$agent_id" "$st")")
         done <<< "$status"
     done <<< "$agent_ids"
 
-    # Build files JSON
-    if [ ${#all_files[@]} -gt 0 ]; then
-        # Use jq to build proper JSON
-        local entries_json="[]"
-        declare -A file_agents
-
+    # Build files JSON using jq (bash 3.2 compatible — no associative arrays)
+    if [ ${#all_files[@]} -gt 0 ] && command -v jq &>/dev/null; then
+        # Feed all entries to jq which handles grouping and JSON building
+        local entries_input=""
         for entry in "${all_files[@]}"; do
-            local file="${entry%%|*}"
-            local rest="${entry#*|}"
-            local agent="${rest%%|*}"
-            local st="${rest##*|}"
-
-            if [ -z "${file_agents[$file]+x}" ]; then
-                file_agents[$file]=""
-            fi
-            file_agents[$file]="${file_agents[$file]}${agent}:${st},"
+            entries_input+="$entry"$'\n'
         done
 
-        entries_json="["
-        local first=true
-        for file in "${!file_agents[@]}"; do
-            local agents_str="${file_agents[$file]}"
-            agents_str="${agents_str%,}"  # remove trailing comma
-
-            # Check for conflict (multiple agents touching same file)
-            local agent_count=$(echo "$agents_str" | tr ',' '\n' | wc -l | tr -d ' ')
-            local conflict="false"
-            [ "$agent_count" -gt 1 ] && conflict="true"
-
-            # Build agents object
-            local agents_obj="{"
-            local afirst=true
-            IFS=',' read -ra agent_entries <<< "$agents_str"
-            for ae in "${agent_entries[@]}"; do
-                local aname="${ae%%:*}"
-                local ast="${ae##*:}"
-                $afirst || agents_obj+=","
-                agents_obj+="\"$aname\":\"$ast\""
-                afirst=false
-            done
-            agents_obj+="}"
-
-            $first || entries_json+=","
-            entries_json+="{\"path\":\"$file\",\"agents\":$agents_obj,\"conflict\":$conflict}"
-            first=false
-        done
-        entries_json+="]"
+        local entries_json
+        entries_json=$(echo "$entries_input" | jq -R -s '
+            split("\n") | map(select(length > 0)) |
+            map(split("\t") | {path: .[0], agent: .[1], status: .[2]}) |
+            group_by(.path) |
+            map({
+                path: .[0].path,
+                agents: (map({(.agent): .status}) | add),
+                conflict: (length > 1)
+            })
+        ' 2>/dev/null || echo "[]")
 
         files_json="{\"files\":$entries_json,\"locks\":{},\"updated_at\":\"$now\"}"
+    fi
+
+    # Gather worktree status for each agent
+    local worktrees_json="[]"
+    local agent_data
+    agent_data=$(jq -r '.agents[] | [(.id // ""), (.type // ""), (.branch // ""), (.worktree // "")] | join("|")' "$state_file" 2>/dev/null)
+    if [ -n "$agent_data" ]; then
+        local wt_entries=""
+        while IFS='|' read -r wt_id wt_type wt_branch wt_worktree; do
+            [ -z "$wt_id" ] && continue
+            [ "$wt_id" = "main" ] && continue
+            [ -d "$wt_worktree" ] || continue
+
+            local ahead=0
+            ahead=$(git -C "$wt_worktree" rev-list --count "main..$wt_branch" 2>/dev/null || echo "0")
+            local is_dirty=false
+            local porcelain=$(git -C "$wt_worktree" status --porcelain 2>/dev/null)
+            [ -n "$porcelain" ] && is_dirty=true
+
+            wt_entries+=$(jq -nc --arg id "$wt_id" --arg type "$wt_type" --arg branch "$wt_branch" --argjson ahead "$ahead" --argjson dirty "$is_dirty" \
+                '{agent_id: $id, agent_type: $type, branch: $branch, commits_ahead: $ahead, dirty: $dirty}')
+            wt_entries+=","
+        done <<< "$agent_data"
+
+        if [ -n "$wt_entries" ]; then
+            # Remove trailing comma and wrap in array
+            wt_entries="${wt_entries%,}"
+            worktrees_json="[$wt_entries]"
+        fi
+    fi
+
+    # Merge worktrees into files_json
+    if [ "$worktrees_json" != "[]" ] && command -v jq &>/dev/null; then
+        files_json=$(echo "$files_json" | jq --argjson wt "$worktrees_json" '.worktrees = $wt' 2>/dev/null || echo "$files_json")
+    fi
+
+    # Collect local branches with tracking info and ahead/behind counts
+    local branches_json="[]"
+    local current_branch
+    current_branch=$(git -C "$project_dir" branch --show-current 2>/dev/null || echo "")
+
+    # Get agent branch names for is_agent tagging
+    local agent_branches=""
+    if [ -f "$state_file" ]; then
+        agent_branches=$(jq -r '.agents[].branch // empty' "$state_file" 2>/dev/null)
+    fi
+
+    local branch_entries=""
+    while IFS= read -r line; do
+        [ -z "$line" ] && continue
+        local bname="$line"
+        local is_current=false
+        [ "$bname" = "$current_branch" ] && is_current=true
+
+        # Check if this is an agent branch
+        local is_agent=false
+        if [ -n "$agent_branches" ] && echo "$agent_branches" | grep -qx "$bname"; then
+            is_agent=true
+        fi
+
+        # Tracking info: upstream ref, ahead, behind
+        local tracking=""
+        local ahead=0
+        local behind=0
+        local upstream
+        upstream=$(git -C "$project_dir" for-each-ref --format='%(upstream:short)' "refs/heads/$bname" 2>/dev/null)
+        if [ -n "$upstream" ]; then
+            tracking="$upstream"
+            local ab
+            ab=$(git -C "$project_dir" rev-list --left-right --count "$bname...$upstream" 2>/dev/null || echo "0	0")
+            ahead=$(echo "$ab" | awk '{print $1}')
+            behind=$(echo "$ab" | awk '{print $2}')
+        else
+            # No upstream — count ahead of main (or default branch)
+            local default_branch
+            default_branch=$(git -C "$project_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || echo "main")
+            if [ "$bname" != "$default_branch" ]; then
+                ahead=$(git -C "$project_dir" rev-list --count "$default_branch..$bname" 2>/dev/null || echo "0")
+                behind=$(git -C "$project_dir" rev-list --count "$bname..$default_branch" 2>/dev/null || echo "0")
+            fi
+        fi
+
+        # Last commit subject (truncated to 60 chars)
+        local last_commit
+        last_commit=$(git -C "$project_dir" log -1 --format='%s' "$bname" 2>/dev/null | head -c 60 || echo "")
+
+        branch_entries+=$(jq -nc --arg name "$bname" --argjson current "$is_current" --arg tracking "$tracking" \
+            --argjson ahead "${ahead:-0}" --argjson behind "${behind:-0}" --arg commit "$last_commit" --argjson agent "$is_agent" \
+            '{name: $name, is_current: $current, tracking: $tracking, ahead: $ahead, behind: $behind, last_commit: $commit, is_agent: $agent}')
+        branch_entries+=","
+    done <<< "$(git -C "$project_dir" for-each-ref --format='%(refname:short)' refs/heads/ --sort=-committerdate 2>/dev/null)"
+
+    if [ -n "$branch_entries" ]; then
+        branch_entries="${branch_entries%,}"
+        branches_json="[$branch_entries]"
+    fi
+
+    # Collect remote branches
+    local remotes_json="[]"
+    local remote_list
+    remote_list=$(git -C "$project_dir" for-each-ref --format='%(refname:short)' refs/remotes/ --sort=-committerdate 2>/dev/null | grep -v '/HEAD$')
+    if [ -n "$remote_list" ]; then
+        remotes_json=$(echo "$remote_list" | jq -R -s 'split("\n") | map(select(length > 0))' 2>/dev/null || echo "[]")
+    fi
+
+    # Merge branches and remotes into files_json
+    if command -v jq &>/dev/null; then
+        files_json=$(echo "$files_json" | jq \
+            --argjson branches "$branches_json" \
+            --argjson remotes "$remotes_json" \
+            '.branches = $branches | .remotes = $remotes' 2>/dev/null || echo "$files_json")
     fi
 
     # Atomic write
@@ -1813,8 +2133,16 @@ update_beads_data() {
                 title: .title,
                 status: .status,
                 priority: (.priority // 2),
-                type: (.type // "task"),
-                assignee: (.assignee // "")
+                type: (.issue_type // .type // "task"),
+                assignee: (.assignee // ""),
+                description: (.body // .description // ""),
+                created_at: (.created_at // ""),
+                updated_at: (.updated_at // ""),
+                dependency_count: (.dependency_count // 0),
+                dependent_count: (.dependent_count // 0),
+                labels: (.labels // []),
+                closed_at: (.closed_at // ""),
+                close_reason: (.close_reason // "")
             }],
             updated_at: "'"$now"'"
         }' 2>/dev/null)
@@ -1822,6 +2150,215 @@ update_beads_data() {
         if [ -n "$formatted" ]; then
             echo "$formatted" > "$beads_file.tmp" && mv "$beads_file.tmp" "$beads_file"
         fi
+    fi
+}
+
+# Update tree.json with project file listing and git status
+update_tree_data() {
+    local project_dir="$1"
+    local tree_file="$project_dir/$VAMP_DIR/tree.json"
+
+    if ! command -v jq &>/dev/null; then
+        return 0
+    fi
+
+    # Must be a git repo
+    if ! git -C "$project_dir" rev-parse --git-dir &>/dev/null 2>&1; then
+        return 0
+    fi
+
+    local now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # Get all tracked files
+    local tracked
+    tracked=$(git -C "$project_dir" ls-files 2>/dev/null)
+
+    # Get modified/added/deleted/untracked files with status
+    local status_entries
+    status_entries=$(git -C "$project_dir" status --porcelain 2>/dev/null)
+
+    # Build JSON using jq
+    local tree_json
+    tree_json=$(printf '%s\n' "$tracked" | jq -R -s --arg now "$now" --arg status_raw "$status_entries" '
+        # Parse status entries into a lookup map
+        ($status_raw | split("\n") | map(select(length > 0)) |
+            map({
+                key: (.[3:] | ltrimstr(" ")),
+                value: (.[0:2] | gsub(" "; ""))
+            }) | from_entries
+        ) as $status_map |
+
+        # Parse tracked files
+        (split("\n") | map(select(length > 0))) as $files |
+
+        # Collect unique directory paths
+        ($files | map(split("/") | .[:-1]) | map(
+            [range(1; length + 1)] | map(. as $n | input_filename) | null
+        )) as $_ignore |
+
+        # Build directory set from all file paths
+        ([$files[] | split("/") |
+            [range(1; length)] |
+            map(. as $n | ($files[0] | split("/"))[:$n] | join("/"))
+        ] | flatten | unique) as $dirs |
+
+        # Build entries: dirs first, then files, sorted
+        (
+            [$dirs[] | {path: ., status: "", is_dir: true}] +
+            [$files[] | {path: ., status: ($status_map[.] // ""), is_dir: false}]
+        ) |
+
+        # Add any untracked files from status that are not in tracked list
+        . + [
+            $status_map | to_entries[] |
+            select(.key | IN($files[]) | not) |
+            select(.key | endswith("/") | not) |
+            {path: .key, status: .value, is_dir: false}
+        ] |
+
+        # Sort by path
+        sort_by(.path) |
+        unique_by(.path) |
+
+        {entries: ., updated_at: $now}
+    ' 2>/dev/null)
+
+    if [ -n "$tree_json" ] && [ "$tree_json" != "null" ]; then
+        echo "$tree_json" > "$tree_file.tmp" && mv "$tree_file.tmp" "$tree_file"
+    fi
+}
+
+# Update metrics.json with system stats and Claude usage
+update_metrics_data() {
+    local project_dir="$1"
+    local metrics_file="$project_dir/$VAMP_DIR/metrics.json"
+    local state_file="$project_dir/$VAMP_DIR/state.json"
+
+    if ! command -v jq &>/dev/null; then
+        return 0
+    fi
+
+    local now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+    # System load average
+    local load1=0 load5=0 load15=0
+    if [[ "$OSTYPE" == darwin* ]]; then
+        local loadavg
+        loadavg=$(sysctl -n vm.loadavg 2>/dev/null | tr -d '{}')
+        load1=$(echo "$loadavg" | awk '{print $1}')
+        load5=$(echo "$loadavg" | awk '{print $2}')
+        load15=$(echo "$loadavg" | awk '{print $3}')
+    elif [ -f /proc/loadavg ]; then
+        read -r load1 load5 load15 _ < /proc/loadavg
+    fi
+
+    # Memory usage
+    local mem_total_mb=0 mem_used_mb=0 mem_pct=0
+    if [[ "$OSTYPE" == darwin* ]]; then
+        local mem_total_bytes
+        mem_total_bytes=$(sysctl -n hw.memsize 2>/dev/null || echo "0")
+        mem_total_mb=$((mem_total_bytes / 1048576))
+
+        # Parse vm_stat for pages used
+        local page_size
+        page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo "4096")
+        local vm_output
+        vm_output=$(vm_stat 2>/dev/null)
+        local pages_active pages_wired pages_speculative pages_compressed
+        pages_active=$(echo "$vm_output" | awk '/Pages active:/ {gsub(/\./, "", $3); print $3}')
+        pages_wired=$(echo "$vm_output" | awk '/Pages wired down:/ {gsub(/\./, "", $4); print $4}')
+        pages_compressed=$(echo "$vm_output" | awk '/Pages occupied by compressor:/ {gsub(/\./, "", $5); print $5}')
+        pages_active=${pages_active:-0}
+        pages_wired=${pages_wired:-0}
+        pages_compressed=${pages_compressed:-0}
+        local used_pages=$((pages_active + pages_wired + pages_compressed))
+        mem_used_mb=$((used_pages * page_size / 1048576))
+
+        if [ "$mem_total_mb" -gt 0 ]; then
+            mem_pct=$((mem_used_mb * 100 / mem_total_mb))
+        fi
+    elif [ -f /proc/meminfo ]; then
+        local total_kb available_kb
+        total_kb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)
+        available_kb=$(awk '/^MemAvailable:/ {print $2}' /proc/meminfo)
+        mem_total_mb=$((total_kb / 1024))
+        local used_kb=$((total_kb - available_kb))
+        mem_used_mb=$((used_kb / 1024))
+        if [ "$total_kb" -gt 0 ]; then
+            mem_pct=$((used_kb * 100 / total_kb))
+        fi
+    fi
+
+    # Claude stats from stats-cache.json
+    local claude_json='{}'
+    local stats_file="$HOME/.claude/stats-cache.json"
+    if [ -f "$stats_file" ]; then
+        claude_json=$(jq '{
+            today_messages: (.today.messages // 0),
+            today_sessions: (.today.sessions // 0),
+            today_tool_calls: (.today.tool_calls // 0),
+            total_messages: (.total.messages // 0),
+            total_sessions: (.total.sessions // 0),
+            models: [(.models // {} | to_entries[] | {
+                model: .key,
+                input_tokens: (.value.input_tokens // 0),
+                output_tokens: (.value.output_tokens // 0),
+                cache_read_tokens: (.value.cache_read_tokens // 0)
+            })],
+            hour_counts: (.today.hour_counts // [])
+        }' "$stats_file" 2>/dev/null || echo '{}')
+    fi
+
+    # Agent processes — check liveness via tmux window existence
+    local agents_json='[]'
+    if [ -f "$state_file" ]; then
+        local session_name
+        session_name=$(jq -r '.project.session // ""' "$state_file" 2>/dev/null)
+        agents_json=$(jq -r '[.agents[] | {id: .id, name: .name, status: .status, type: .type, branch: .branch, task: (.task // ""), pid: .pid}]' "$state_file" 2>/dev/null || echo '[]')
+
+        # Check liveness: main is always alive (it's this session), others check tmux window
+        local agent_count
+        agent_count=$(echo "$agents_json" | jq 'length' 2>/dev/null || echo "0")
+        for ((idx=0; idx<agent_count; idx++)); do
+            local a_id
+            a_id=$(echo "$agents_json" | jq -r ".[$idx].id" 2>/dev/null)
+            local status="dead"
+            if [ "$a_id" = "main" ]; then
+                status="alive"
+            elif [ -n "$session_name" ] && tmux list-windows -t "$session_name" -F '#{window_name}' 2>/dev/null | grep -qx "$a_id"; then
+                status="alive"
+            fi
+            agents_json=$(echo "$agents_json" | jq --argjson idx "$idx" --arg status "$status" \
+                '.[$idx].process_status = $status' 2>/dev/null || echo "$agents_json")
+        done
+    fi
+
+    # Assemble final JSON
+    local metrics_json
+    metrics_json=$(jq -n \
+        --argjson load1 "${load1:-0}" \
+        --argjson load5 "${load5:-0}" \
+        --argjson load15 "${load15:-0}" \
+        --argjson mem_pct "${mem_pct:-0}" \
+        --argjson mem_total "$mem_total_mb" \
+        --argjson mem_used "$mem_used_mb" \
+        --argjson claude "$claude_json" \
+        --argjson agents "$agents_json" \
+        --arg now "$now" \
+        '{
+            system: {
+                load_avg: [$load1, $load5, $load15],
+                memory_pct: $mem_pct,
+                memory_total_mb: $mem_total,
+                memory_used_mb: $mem_used
+            },
+            claude: $claude,
+            agents: $agents,
+            updated_at: $now
+        }' 2>/dev/null)
+
+    if [ -n "$metrics_json" ] && [ "$metrics_json" != "null" ]; then
+        echo "$metrics_json" > "$metrics_file.tmp" && mv "$metrics_file.tmp" "$metrics_file"
     fi
 }
 
@@ -1834,31 +2371,113 @@ log_activity() {
     local activity_file="$project_dir/$VAMP_DIR/activity.log"
 
     local now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    echo "{\"timestamp\":\"$now\",\"agent\":\"$agent\",\"event\":\"$event\",\"detail\":\"$detail\"}" >> "$activity_file"
+    if command -v jq &>/dev/null; then
+        jq -nc --arg ts "$now" --arg agent "$agent" --arg event "$event" --arg detail "$detail" \
+            '{timestamp: $ts, agent: $agent, event: $event, detail: $detail}' >> "$activity_file"
+    else
+        # Fallback: manually escape quotes
+        local safe_detail="${detail//\"/\\\"}"
+        local safe_agent="${agent//\"/\\\"}"
+        echo "{\"timestamp\":\"$now\",\"agent\":\"$safe_agent\",\"event\":\"$event\",\"detail\":\"$safe_detail\"}" >> "$activity_file"
+    fi
+}
+
+## Ensure command watcher is running for a project directory.
+## Launches watcher inside the tmux session so it lives with the session.
+## Safe to call multiple times — only starts if not already alive.
+ensure_watcher() {
+    local project_dir="$1"
+    local pid_file="$project_dir/$VAMP_DIR/watcher.pid"
+    local session_name="$2"
+
+    # Check if existing watcher is alive
+    if [ -f "$pid_file" ]; then
+        local old_pid
+        old_pid=$(cat "$pid_file" 2>/dev/null)
+        if [ -n "$old_pid" ] && kill -0 "$old_pid" 2>/dev/null; then
+            log_debug "ensure_watcher: already running (pid=$old_pid)"
+            return 0
+        fi
+    fi
+
+    # Clear stale commands from dead watcher
+    echo "[]" > "$project_dir/$VAMP_DIR/commands.json" 2>/dev/null
+
+    # Get the installed vamp binary path
+    local vamp_bin
+    vamp_bin="$(command -v vamp 2>/dev/null || echo "$0")"
+
+    # Launch watcher via the shell pane inside tmux.
+    # nohup + disown ensures it survives if the shell pane is closed.
+    # The watcher self-exits when the tmux session dies.
+    if tmux has-session -t "$session_name" 2>/dev/null; then
+        local watcher_cmd="nohup '$vamp_bin' _watcher '$project_dir' '$session_name' </dev/null >/dev/null 2>&1 & disown"
+        tmux send-keys -t "$session_name:0.2" "$watcher_cmd" Enter
+        log_debug "ensure_watcher: launched in shell pane"
+        # Wait for PID file to appear with a valid, running PID
+        local waited=0
+        while [ $waited -lt 5 ]; do
+            if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
+                log_debug "ensure_watcher: confirmed running (pid=$(cat "$pid_file"))"
+                return 0
+            fi
+            sleep 1
+            ((waited++)) || true
+        done
+        log_debug "ensure_watcher: WARNING: watcher may not have started"
+    fi
 }
 
 command_watcher() {
+    # Disable errexit — watcher must survive transient errors
+    set +e
+
     local project_dir="$1"
+    local session_name="$2"
     local commands_file="$project_dir/$VAMP_DIR/commands.json"
+    local pid_file="$project_dir/$VAMP_DIR/watcher.pid"
     local tick=0
 
-    log_debug "command_watcher: starting for $project_dir"
+    # Write our PID so ensure_watcher can detect us
+    # BASHPID is bash 4+; on macOS bash 3.2, use sh -c 'echo $PPID' trick
+    if [ -n "${BASHPID:-}" ]; then
+        echo "$BASHPID" > "$pid_file"
+    else
+        sh -c 'echo $PPID' > "$pid_file"
+    fi
 
     while true; do
         sleep 1
-        ((tick++))
+        ((tick++)) || true
+
+        # Self-exit if tmux session is gone
+        if [ -n "$session_name" ] && ! tmux has-session -t "$session_name" 2>/dev/null; then
+            rm -f "$project_dir/$VAMP_DIR/watcher.pid"
+            exit 0
+        fi
 
         # Refresh agent state every cycle
-        state_refresh "$project_dir" 2>/dev/null
+        (state_refresh "$project_dir") 2>/dev/null || true
 
         # Update files data every 5 seconds
+        # Run data updates in subshells so crashes don't kill watcher
         if (( tick % 5 == 0 )); then
-            update_files_data "$project_dir" 2>/dev/null
+            (update_files_data "$project_dir") 2>/dev/null || true
         fi
 
         # Update beads data every 10 seconds
         if (( tick % 10 == 0 )); then
-            update_beads_data "$project_dir" 2>/dev/null
+            (update_beads_data "$project_dir") 2>/dev/null || true
+        fi
+
+        # Update tree data every 10 seconds (staggered)
+        if (( tick % 10 == 5 )); then
+            (update_tree_data "$project_dir") 2>/dev/null || true
+        fi
+
+        # Update metrics data every 5 seconds (staggered)
+        if (( tick % 5 == 2 )); then
+            (update_metrics_data "$project_dir") 2>/dev/null || true
         fi
 
         # Process commands
@@ -1871,26 +2490,48 @@ command_watcher() {
             continue
         fi
 
-        # Clear the file
-        echo "[]" > "$commands_file"
+        # Atomically clear the file (prevents losing commands written between read and clear)
+        local tmp_cmd="$commands_file.tmp"
+        echo "[]" > "$tmp_cmd" && mv "$tmp_cmd" "$commands_file"
 
         if ! command -v jq &>/dev/null; then
             continue
         fi
 
-        local count=$(echo "$commands" | jq 'length' 2>/dev/null || echo "0")
-        for ((i = 0; i < count; i++)); do
-            local action=$(echo "$commands" | jq -r ".[$i].action" 2>/dev/null)
-            local cmd_id=$(echo "$commands" | jq -r ".[$i].id // empty" 2>/dev/null)
-            local cmd_type=$(echo "$commands" | jq -r ".[$i].type // \"claude\"" 2>/dev/null)
-            local cmd_name=$(echo "$commands" | jq -r ".[$i].name // empty" 2>/dev/null)
+        # Parse all commands in a single jq call (pipe-delimited to preserve empty fields)
+        local parsed
+        parsed=$(echo "$commands" | jq -r '.[] | [.action, (.id // ""), (.type // ""), (.name // "")] | join("|")' 2>/dev/null)
+        [ -z "$parsed" ] && continue
+
+        while IFS='|' read -r action cmd_id cmd_type cmd_name; do
+            [ -z "$action" ] && continue
+
+            # Validate action is a known command
+            case "$action" in
+                create|kill|focus|pause|restart|rename|merge) ;;
+                *) log_debug "command_watcher: unknown action '$action', skipping"; continue ;;
+            esac
+
+            # Validate name/id fields (reject shell metacharacters)
+            if [ -n "$cmd_name" ] && [[ ! "$cmd_name" =~ ^[a-zA-Z0-9._\ -]+$ ]]; then
+                log_debug "command_watcher: rejecting unsafe name '$cmd_name'"
+                continue
+            fi
+            if [ -n "$cmd_id" ] && [[ ! "$cmd_id" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+                log_debug "command_watcher: rejecting unsafe id '$cmd_id'"
+                continue
+            fi
 
             log_debug "command_watcher: action=$action id=$cmd_id type=$cmd_type name=$cmd_name"
 
             case "$action" in
                 create)
-                    (cd "$project_dir" && agent_create "$cmd_type" "$cmd_name") 2>/dev/null
-                    log_activity "$project_dir" "${cmd_name:-$cmd_type}" "agent_create" "$cmd_type"
+                    if [ -z "$cmd_type" ]; then
+                        log_debug "command_watcher: create missing type, skipping"
+                    else
+                        (cd "$project_dir" && agent_create "$cmd_type" "$cmd_name") 2>/dev/null
+                        log_activity "$project_dir" "${cmd_name:-$cmd_type}" "agent_create" "$cmd_type"
+                    fi
                     ;;
                 kill)
                     (cd "$project_dir" && agent_kill "$cmd_id" "--remove") 2>/dev/null
@@ -1907,8 +2548,24 @@ command_watcher() {
                     (cd "$project_dir" && agent_restart "$cmd_id") 2>/dev/null
                     log_activity "$project_dir" "$cmd_id" "agent_restart" ""
                     ;;
+                rename)
+                    if [ -n "$cmd_id" ] && [ -n "$cmd_name" ]; then
+                        local sf="$project_dir/$VAMP_DIR/state.json"
+                        if [ -f "$sf" ]; then
+                            local tmp="$sf.tmp"
+                            jq --arg id "$cmd_id" --arg name "$cmd_name" \
+                               '(.agents[] | select(.id == $id)).name = $name' \
+                               "$sf" > "$tmp" && mv "$tmp" "$sf"
+                            log_activity "$project_dir" "$cmd_id" "agent_rename" "$cmd_name"
+                        fi
+                    fi
+                    ;;
+                merge)
+                    (cd "$project_dir" && agent_merge "--all") 2>/dev/null
+                    log_activity "$project_dir" "system" "agent_merge" "all"
+                    ;;
             esac
-        done
+        done <<< "$parsed"
     done
 }
 
@@ -1951,6 +2608,7 @@ start_session() {
     # Check if session exists
     if tmux has-session -t "$SESSION_NAME" 2>/dev/null; then
         echo -e "${YELLOW}Session exists. Attaching...${NC}"
+        ensure_watcher "$PROJECT_DIR" "$SESSION_NAME"
         tmux attach-session -t "$SESSION_NAME"
         return 0
     fi
@@ -1964,6 +2622,21 @@ start_session() {
     # Initialize .vamp directory
     init_vamp_dir "$PROJECT_DIR"
 
+    # Clear activity log from previous session and log session start
+    > "$PROJECT_DIR/$VAMP_DIR/activity.log"
+    log_activity "$PROJECT_DIR" "vamp" "session_start" "v${VAMP_VERSION}"
+
+    # Reset state file — clear stale agents from previous sessions (atomic write)
+    local project_name=$(basename "$PROJECT_DIR")
+    local tmp_state="$PROJECT_DIR/$VAMP_DIR/state.json.tmp"
+    jq -nc \
+        --arg name "$project_name" \
+        --arg path "$PROJECT_DIR" \
+        --arg session "$SESSION_NAME" \
+        --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{version:"2.0.0",project:{name:$name,path:$path,session:$session},agents:[],focused_agent:"main",totals:{tokens:0,cost_usd:0},updated_at:$ts}' \
+        > "$tmp_state" && mv "$tmp_state" "$PROJECT_DIR/$VAMP_DIR/state.json"
+
     # Detect sidebar binary
     local SIDEBAR_CMD=""
     if command -v vamp-sidebar &>/dev/null; then
@@ -1973,17 +2646,18 @@ start_session() {
     fi
 
     # ============================================
-    # Create tmux session — 2-pane layout
+    # Create tmux session — 3-pane layout
     # ============================================
     # Layout:
     # +---------------------------+------------------+
     # |                           |   vamp-sidebar   |
     # |      Claude Code          |   (Ratatui)      |
-    # |      (main agent)         |   4 tabs:        |
-    # |                           |   players/charts |
-    # |                           |   beads/setlist  |
+    # |      (main agent)         |       50%        |
+    # |                           +------------------+
+    # |                           |   shell          |
+    # |                           |       50%        |
     # +---------------------------+------------------+
-    # Left: 70-75%                Right: 25-30%
+    # Left: 75%                   Right: 25%
 
     tmux new-session -d -s "$SESSION_NAME" -c "$PROJECT_DIR" -x "$(tput cols)" -y "$(tput lines)"
     tmux rename-window -t "$SESSION_NAME:0" "main"
@@ -1992,12 +2666,25 @@ start_session() {
     tmux set-option -t "$SESSION_NAME" mouse on
     tmux set-option -t "$SESSION_NAME" focus-events on
 
-    # Status bar with vamp version
+    # Blue Note styling — match sidebar palette
     tmux set-option -t "$SESSION_NAME" status-right "vamp v${VAMP_VERSION} | %H:%M"
-    tmux set-option -t "$SESSION_NAME" status-style "bg=colour236,fg=colour248"
+    tmux set-option -t "$SESSION_NAME" status-style "bg=#1c1712,fg=#c4a882"
+    tmux set-option -t "$SESSION_NAME" status-left-style "fg=#d4943a,bold"
+    tmux set-option -t "$SESSION_NAME" status-right-style "fg=#6b5740"
+    tmux set-option -t "$SESSION_NAME" pane-border-style "fg=#4a3828"
+    tmux set-option -t "$SESSION_NAME" pane-active-border-style "fg=#d4943a"
+    tmux set-option -t "$SESSION_NAME" window-style "bg=#1c1712"
+    tmux set-option -t "$SESSION_NAME" window-active-style "bg=#241e17"
 
-    # Split: left 75% (Claude Code) | right 25% (sidebar)
+    # Hide window tabs — users navigate via sidebar only
+    tmux set-option -t "$SESSION_NAME" window-status-format ""
+    tmux set-option -t "$SESSION_NAME" window-status-current-format ""
+
+    # Split: left 75% (Claude Code) | right 25% (sidebar + shell)
     tmux split-window -t "$SESSION_NAME:0" -h -p 25 -c "$PROJECT_DIR"
+
+    # Split right pane: top 50% (sidebar) | bottom 50% (shell)
+    tmux split-window -t "$SESSION_NAME:0.1" -v -p 50 -c "$PROJECT_DIR"
 
     # Pane 0: Claude Code (main agent)
     local main_agent_cmd="$CLAUDE_CMD $CLAUDE_FLAGS"
@@ -2014,15 +2701,14 @@ start_session() {
         tmux send-keys -t "$SESSION_NAME:0.1" "cd '$PROJECT_DIR' && echo 'Sidebar not installed. Install with: cargo build --release --manifest-path sidebar/Cargo.toml' && watch -n 2 'cat $VAMP_DIR/state.json 2>/dev/null | jq . 2>/dev/null || echo \"No state yet\"'" Enter
     fi
 
+    # Pane 2: Shell for ad-hoc commands
+    tmux send-keys -t "$SESSION_NAME:0.2" "cd '$PROJECT_DIR' && clear" Enter
+
     # Focus Claude pane
     tmux select-pane -t "$SESSION_NAME:0.0"
 
     # Start command watcher in background
-    command_watcher "$PROJECT_DIR" &
-    local WATCHER_PID=$!
-    # Save watcher PID for cleanup
-    echo "$WATCHER_PID" > "$PROJECT_DIR/$VAMP_DIR/watcher.pid"
-    disown "$WATCHER_PID" 2>/dev/null
+    ensure_watcher "$PROJECT_DIR" "$SESSION_NAME"
 
     echo ""
     echo -e "${CYAN}Keybindings:${NC}"
@@ -2030,21 +2716,18 @@ start_session() {
     echo "  Ctrl-b + z       Zoom pane"
     echo "  Ctrl-b + d       Detach"
     echo ""
-    echo -e "${CYAN}Sidebar (right pane):${NC}"
+    echo -e "${CYAN}Sidebar (top right):${NC}"
     echo "  Tab/Shift-Tab    Cycle tabs"
-    echo "  1-4              Select tab"
-    echo "  a                Add agent"
-    echo "  x                Kill agent"
+    echo "  1-6              Select tab"
+    echo "  Shift-A          Add agent"
+    echo "  Shift-X          Kill agent"
     echo "  f                Focus agent"
+    echo ""
+    echo -e "${CYAN}Shell (bottom right):${NC}"
+    echo "  Ad-hoc commands, vamp agent, git, etc."
     echo ""
 
     tmux attach-session -t "$SESSION_NAME"
-
-    # Cleanup watcher on session end
-    if [ -f "$PROJECT_DIR/$VAMP_DIR/watcher.pid" ]; then
-        kill "$(cat "$PROJECT_DIR/$VAMP_DIR/watcher.pid")" 2>/dev/null || true
-        rm -f "$PROJECT_DIR/$VAMP_DIR/watcher.pid"
-    fi
 }
 
 
@@ -2119,9 +2802,17 @@ case "${1:-}" in
             *)      show_agent_help ;;
         esac
         ;;
+    sidebar)
+        restart_sidebar "${2:-$(pwd)}"
+        ;;
     update)
         shift
         self_update "$@"
+        ;;
+    _watcher)
+        # Hidden subcommand: run command watcher (used by ensure_watcher)
+        set +e
+        command_watcher "$2" "$3"
         ;;
     version|--version|-v)
         echo "vamp v${VAMP_VERSION}"

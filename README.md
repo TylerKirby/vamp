@@ -8,7 +8,7 @@ Terminal-native development environment for Claude Code with a Ratatui sidebar f
 
 - **One command** launches full dev environment
 - **Multi-agent mode** - run Claude, Codex, and Cursor agents in parallel with git worktree isolation
-- **Ratatui sidebar** - 4-tab TUI (players, charts, beads, setlist) with Blue Note jazz aesthetic
+- **Ratatui sidebar** - 6-tab TUI (players, charts, beads, setlist, files, metrics) with Blue Note jazz aesthetic
 - **Mouse support** for scrolling, pane selection, and resizing
 - **Beads integration** for persistent task/context management
 - **Session persistence** - detach and reattach anytime
@@ -19,9 +19,10 @@ Terminal-native development environment for Claude Code with a Ratatui sidebar f
 +---------------------------+------------------+
 |                           |   vamp-sidebar   |
 |      Claude Code          |   (Ratatui)      |
-|      (main agent)         |   4 tabs:        |
+|      (main agent)         |   6 tabs:        |
 |         75%               |   players/charts |
 |                           |   beads/setlist  |
+|                           |   files/metrics  |
 +---------------------------+------------------+
 Left: 75%                   Right: 25%
 ```
@@ -120,7 +121,7 @@ vamp agent kill <name> --remove # Stop and remove worktree
 vamp agent merge                # Merge agent branches to main
 ```
 
-Or use the sidebar: press `a` to add, `x` to kill, `f` to focus, `p` to pause, `r` to restart.
+Or use the sidebar: press `A` to add, `X` to kill, `f` to focus, `p` to pause, `r` to restart, `R` to rename.
 
 ### How It Works
 
@@ -134,9 +135,11 @@ Or use the sidebar: press `a` to add, `x` to kill, `f` to focus, `p` to pause, `
 | Tab | Key | Content |
 |-----|-----|---------|
 | **players** | `1` | Agent list grouped by type, status, controls |
-| **charts** | `2` | File changes across all worktrees, conflict detection |
+| **charts** | `2` | Git branches, remotes, worktrees, file changes |
 | **beads** | `3` | Issue tracker (reads from `bd list`) |
 | **setlist** | `4` | Activity log of agent events |
+| **files** | `5` | Project file tree with git status |
+| **metrics** | `6` | System load, Claude usage, agent health |
 
 ## Keybindings
 
@@ -158,14 +161,19 @@ Or use the sidebar: press `a` to add, `x` to kill, `f` to focus, `p` to pause, `
 | Key | Action |
 |-----|--------|
 | `Tab` / `Shift-Tab` | Cycle tabs |
-| `1`-`4` | Direct tab select |
+| `1`-`6` | Direct tab select |
 | `j` / `k` | Navigate list |
-| `a` | Add agent |
-| `x` | Kill agent |
-| `f` | Focus agent (switch tmux window) |
-| `p` | Pause/resume agent |
-| `r` | Restart agent |
-| `t` | Toggle beads filter (active/all) |
+| `A` | Add agent (Players tab) |
+| `X` | Kill agent (Players tab) |
+| `R` | Rename agent (Players tab) |
+| `f` | Focus agent (Players tab) |
+| `p` | Pause/resume agent (Players tab) |
+| `r` | Restart agent (Players tab) |
+| `t` | Toggle beads filter (Beads tab) |
+| `s` | Cycle status filter (Beads tab) |
+| `l` | Cycle type filter (Beads tab) |
+| `Enter` | Open bead detail / toggle dir (Beads/Files) |
+| `m` | Merge all branches (Charts tab) |
 | `q` | Quit sidebar |
 
 ## Shell Shortcuts
@@ -196,6 +204,7 @@ After install, these shortcuts are available:
 |---------|--------|
 | `bds` | Show ready tasks |
 | `bdl` | List all tasks |
+| `bda` | List all (incl. closed) |
 | `bdip` | In-progress tasks |
 | `bdb` | Blocked tasks |
 | `bdn <title>` | Create new task |
@@ -374,7 +383,9 @@ Tests run automatically on push and PR via GitHub Actions. See `.github/workflow
 ├── commands.json         # Sidebar commands (sidebar → bash)
 ├── files.json            # File changes across worktrees
 ├── beads.json            # Beads issue cache
-└── activity.log          # Activity log
+├── tree.json             # Project file tree with git status
+├── metrics.json          # System, Claude usage, agent health
+└── activity.log          # Activity log (cleared per session)
 
 .vamp-agents/             # Git worktrees for additional agents
 ├── claude-1/

@@ -6,11 +6,11 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, Paragraph},
 };
 
-use crate::app::App;
+use crate::app::{App, scroll_offset};
 use crate::theme;
 
-/// Color for issue status
-fn status_color(status: &str) -> ratatui::style::Color {
+/// Color for issue status (pub so ui.rs can reuse for detail popup)
+pub fn status_color(status: &str) -> ratatui::style::Color {
     match status {
         "open" => theme::GREEN,
         "in_progress" => theme::YELLOW,
@@ -59,7 +59,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             )),
             Line::from(""),
             Line::from(Span::styled(
-                "  [t] toggle filter  [a] add",
+                "  [t] toggle  [s] status  [l] type",
                 Style::default().fg(theme::DIM),
             )),
         ])
@@ -68,35 +68,59 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         return;
     }
 
-    // Filter issues based on active filter
-    let filtered: Vec<_> = if app.beads_filter_active {
-        issues
-            .iter()
-            .filter(|i| i.status != "closed" && i.status != "done")
-            .collect()
-    } else {
-        issues.iter().collect()
-    };
+    // Combined filtering: active toggle + status filter + type filter
+    let filtered: Vec<_> = issues
+        .iter()
+        .filter(|i| {
+            // Active/all toggle
+            if app.beads_filter_active && (i.status == "closed" || i.status == "done") {
+                return false;
+            }
+            // Status filter
+            if let Some(ref sf) = app.beads_status_filter {
+                if i.status != *sf {
+                    return false;
+                }
+            }
+            // Type filter
+            if let Some(ref tf) = app.beads_type_filter {
+                if i.issue_type != *tf {
+                    return false;
+                }
+            }
+            true
+        })
+        .collect();
 
     let mut items: Vec<ListItem> = Vec::new();
 
-    // Header
-    let filter_label = if app.beads_filter_active {
-        "active"
-    } else {
-        "all"
-    };
+    // Header with filter labels
+    let active_label = if app.beads_filter_active { "active" } else { "all" };
+    let status_label = app.beads_status_filter.as_deref().unwrap_or("*");
+    let type_label = app.beads_type_filter.as_deref().unwrap_or("*");
+
     items.push(ListItem::new(Line::from(vec![
         Span::styled(
             format!("  {} issues", filtered.len()),
             Style::default().fg(theme::FG),
         ),
         Span::styled(
-            format!("  [{}]", filter_label),
+            format!("  [{}]", active_label),
+            Style::default().fg(theme::DIM),
+        ),
+        Span::styled(
+            format!(" s:{}", status_label),
+            Style::default().fg(theme::DIM),
+        ),
+        Span::styled(
+            format!(" l:{}", type_label),
             Style::default().fg(theme::DIM),
         ),
     ])));
     items.push(ListItem::new(Line::from("")));
+
+    // header_rows = 2 (header line + blank line), so issue i maps to items[i + header_rows]
+    let header_rows = items.len();
 
     for (i, issue) in filtered.iter().enumerate() {
         let icon = status_icon(&issue.status);
@@ -115,10 +139,13 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             format!(" @{}", issue.assignee)
         };
 
-        let id_short = if issue.id.len() > 10 {
-            &issue.id[..10]
+        // Show more of issue ID: 16 chars with .. suffix
+        let id_short: String = if issue.id.len() > 16 {
+            let mut s: String = issue.id.chars().take(16).collect();
+            s.push_str("..");
+            s
         } else {
-            &issue.id
+            issue.id.clone()
         };
 
         items.push(ListItem::new(Line::from(vec![
@@ -132,6 +159,12 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
         ])));
     }
 
-    let list = List::new(items).block(Block::default().borders(Borders::NONE));
+    // Scroll: keep selected item visible
+    let visible = area.height as usize;
+    let selected_row = app.selected_index + header_rows;
+    let offset = scroll_offset(selected_row, visible);
+    let visible_items: Vec<ListItem> = items.into_iter().skip(offset).collect();
+
+    let list = List::new(visible_items).block(Block::default().borders(Borders::NONE));
     frame.render_widget(list, area);
 }

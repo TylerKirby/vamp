@@ -4,6 +4,12 @@
 
 set -e
 
+# Parse flags
+NO_SETUP=false
+for arg in "$@"; do
+    case "$arg" in --no-setup) NO_SETUP=true ;; esac
+done
+
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
@@ -30,10 +36,19 @@ echo ""
 OS="$(uname -s)"
 case "$OS" in
     Darwin*) PKG="brew install"; OS_NAME="macOS" ;;
-    Linux*)  
-        command -v apt &>/dev/null && PKG="sudo apt install -y"
-        command -v dnf &>/dev/null && PKG="sudo dnf install -y"
-        command -v pacman &>/dev/null && PKG="sudo pacman -S"
+    Linux*)
+        if command -v apt &>/dev/null; then
+            PKG="sudo apt install -y"
+        elif command -v dnf &>/dev/null; then
+            PKG="sudo dnf install -y"
+        elif command -v pacman &>/dev/null; then
+            PKG="sudo pacman -S --noconfirm"
+        else
+            PKG=""
+            echo -e "${YELLOW}No supported package manager found (apt/dnf/pacman).${NC}"
+            echo -e "${YELLOW}You will need to install dependencies manually.${NC}"
+            echo ""
+        fi
         OS_NAME="Linux"
         ;;
     *) echo -e "${RED}Unsupported OS${NC}"; exit 1 ;;
@@ -69,16 +84,48 @@ check() {
 }
 
 # Required
-check tmux tmux || $PKG tmux
+check tmux tmux || { [ -n "$PKG" ] && $PKG tmux || echo -e "    ${RED}Please install tmux manually${NC}"; }
+check jq jq || { [ -n "$PKG" ] && $PKG jq || echo -e "    ${RED}Please install jq manually${NC}"; }
 
 # Recommended
 echo ""
 echo -e "${BLUE}Recommended tools:${NC}"
-check yazi yazi || echo -e "    ${YELLOW}Install: $PKG yazi${NC}"
-check htop htop || $PKG htop 2>/dev/null || true
-check lazygit lazygit || echo -e "    ${YELLOW}Install: $PKG lazygit${NC}"
-check fzf fzf || echo -e "    ${YELLOW}Install: $PKG fzf${NC}"
-check jq jq || $PKG jq 2>/dev/null || true
+check fzf fzf || echo -e "    ${YELLOW}Install: ${PKG:-your package manager} fzf${NC}"
+
+# AI coding agents
+echo ""
+echo -e "${BLUE}AI coding agents:${NC}"
+ai_found=0
+
+check_ai_cli() {
+    local name="$1"
+    local cmd="$2"
+    local fallback="$3"
+    local install_hint="$4"
+
+    if command -v "$cmd" &>/dev/null; then
+        echo -e "  ${GREEN}✓${NC} $name"
+        ai_found=$((ai_found + 1))
+        return 0
+    elif [ -n "$fallback" ] && [ -e "$fallback" ]; then
+        echo -e "  ${GREEN}✓${NC} $name (${fallback})"
+        ai_found=$((ai_found + 1))
+        return 0
+    else
+        echo -e "  ${YELLOW}○${NC} $name - $install_hint"
+        return 1
+    fi
+}
+
+check_ai_cli "Claude Code" "claude" "" "npm install -g @anthropic-ai/claude-code"
+check_ai_cli "Codex" "codex" "" "https://github.com/openai/codex"
+check_ai_cli "Cursor" "cursor-agent" "/Applications/Cursor.app" "https://cursor.com"
+
+if [ "$ai_found" -eq 0 ]; then
+    echo ""
+    echo -e "  ${RED}⚠ No AI coding agents found.${NC}"
+    echo -e "  ${RED}  vamp requires at least one (Claude Code recommended).${NC}"
+fi
 
 # Beads
 echo ""
@@ -100,7 +147,15 @@ fi
 # ============================================
 
 echo ""
-echo -e "${BLUE}Installing vamp...${NC}"
+
+# Detect upgrade
+if [ -x "$BIN_DIR/vamp" ]; then
+    OLD_VERSION=$("$BIN_DIR/vamp" --version 2>/dev/null | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' || echo "unknown")
+    NEW_VERSION=$(grep -o 'VAMP_VERSION="[^"]*"' "$SCRIPT_DIR/bin/vamp" | cut -d'"' -f2)
+    echo -e "${BLUE}Upgrading vamp ${OLD_VERSION} → ${NEW_VERSION}...${NC}"
+else
+    echo -e "${BLUE}Installing vamp...${NC}"
+fi
 
 # Copy main binary
 cp "$SCRIPT_DIR/bin/vamp" "$BIN_DIR/vamp"
@@ -114,22 +169,23 @@ echo -e "  ${GREEN}✓${NC} $LIB_DIR/vamp-utils.sh"
 # Build and install sidebar
 echo ""
 echo -e "${BLUE}Installing sidebar...${NC}"
-ARCH="$(uname -m)"
-OS_LC="$(uname -s | tr '[:upper:]' '[:lower:]')"
 
 if [ -d "$SCRIPT_DIR/sidebar" ] && command -v cargo &>/dev/null; then
     echo "  Building from source..."
-    if cargo build --release --manifest-path "$SCRIPT_DIR/sidebar/Cargo.toml" 2>/dev/null; then
+    if cargo build --release --manifest-path "$SCRIPT_DIR/sidebar/Cargo.toml"; then
         cp "$SCRIPT_DIR/sidebar/target/release/vamp-sidebar" "$BIN_DIR/vamp-sidebar"
         chmod +x "$BIN_DIR/vamp-sidebar"
         echo -e "  ${GREEN}✓${NC} $BIN_DIR/vamp-sidebar"
     else
-        echo -e "  ${YELLOW}○${NC} Sidebar build failed (optional, vamp works without it)"
+        echo -e "  ${RED}✗${NC} Sidebar build failed"
+        echo -e "    Try: cd sidebar && cargo build --release"
     fi
-elif command -v cargo &>/dev/null; then
-    echo -e "  ${YELLOW}○${NC} sidebar/ not found, skipping build"
+elif ! command -v cargo &>/dev/null; then
+    echo -e "  ${RED}✗${NC} Rust/cargo not found (required to build the sidebar)"
+    echo -e "    Install Rust: ${CYAN}curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh${NC}"
+    echo -e "    Then re-run this installer."
 else
-    echo -e "  ${YELLOW}○${NC} cargo not found, skipping sidebar (install Rust: https://rustup.rs)"
+    echo -e "  ${RED}✗${NC} sidebar/ directory not found"
 fi
 
 # Create default config
@@ -169,10 +225,12 @@ case "$SHELL_NAME" in
     *)    RC_FILE="$HOME/.profile" ;;
 esac
 
-# Add to PATH if needed
-if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
+# Add to PATH if needed (check both current PATH and rc file content)
+if [[ ":$PATH:" != *":$BIN_DIR:"* ]] && ! grep -q '\.local/bin' "$RC_FILE" 2>/dev/null; then
     echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$RC_FILE"
     echo -e "  ${GREEN}✓${NC} Added $BIN_DIR to PATH"
+else
+    echo -e "  ${GREEN}✓${NC} PATH already configured"
 fi
 
 # Source utils
@@ -181,6 +239,8 @@ if ! grep -q "vamp-utils.sh" "$RC_FILE" 2>/dev/null; then
     echo "# vamp - Claude Code environment" >> "$RC_FILE"
     echo "[ -f \"$LIB_DIR/vamp-utils.sh\" ] && source \"$LIB_DIR/vamp-utils.sh\"" >> "$RC_FILE"
     echo -e "  ${GREEN}✓${NC} Added vamp-utils to $RC_FILE"
+else
+    echo -e "  ${GREEN}✓${NC} vamp-utils already sourced in $RC_FILE"
 fi
 
 # ============================================
@@ -195,15 +255,22 @@ echo -e "  • Claude Code hooks (session start, pre-compaction)"
 echo -e "  • Global CLAUDE.md template with beads workflow"
 echo -e "  • Recommended permissions for beads and git commands"
 echo ""
-read -p "Run vamp setup now? [Y/n] " setup_confirm
-if [[ ! "$setup_confirm" =~ ^[Nn]$ ]]; then
-    echo ""
-    # Source the new PATH so vamp is available
-    export PATH="$BIN_DIR:$PATH"
-    "$BIN_DIR/vamp" setup
+if [ "$NO_SETUP" = true ]; then
+    echo -e "${YELLOW}Skipping setup (--no-setup)${NC}"
+elif [ ! -t 0 ]; then
+    echo -e "${YELLOW}Non-interactive install detected, skipping setup.${NC}"
+    echo -e "${YELLOW}Run 'vamp setup' manually after install.${NC}"
 else
-    echo ""
-    echo -e "${YELLOW}Skipped. Remember to run 'vamp setup' later for full integration.${NC}"
+    read -p "Run vamp setup now? [Y/n] " setup_confirm
+    if [[ ! "$setup_confirm" =~ ^[Nn]$ ]]; then
+        echo ""
+        # Source the new PATH so vamp is available
+        export PATH="$BIN_DIR:$PATH"
+        "$BIN_DIR/vamp" setup
+    else
+        echo ""
+        echo -e "${YELLOW}Skipped. Remember to run 'vamp setup' later for full integration.${NC}"
+    fi
 fi
 
 # ============================================
