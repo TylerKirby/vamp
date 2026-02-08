@@ -175,6 +175,10 @@ if [ -d "$SCRIPT_DIR/sidebar" ] && command -v cargo &>/dev/null; then
     if cargo build --release --manifest-path "$SCRIPT_DIR/sidebar/Cargo.toml"; then
         cp "$SCRIPT_DIR/sidebar/target/release/vamp-sidebar" "$BIN_DIR/vamp-sidebar"
         chmod +x "$BIN_DIR/vamp-sidebar"
+        # Re-sign on macOS to prevent Apple System Policy from killing the binary
+        if [[ "$(uname)" == "Darwin" ]] && command -v codesign &>/dev/null; then
+            codesign --sign - --force "$BIN_DIR/vamp-sidebar" 2>/dev/null || true
+        fi
         echo -e "  ${GREEN}✓${NC} $BIN_DIR/vamp-sidebar"
     else
         echo -e "  ${RED}✗${NC} Sidebar build failed"
