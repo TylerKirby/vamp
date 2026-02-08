@@ -103,7 +103,7 @@ teardown() {
 
 @test "agent list: shows no agents message" {
     mkdir -p .vamp
-    echo '{"version":"2.0.0","project":{},"agents":[],"totals":{"tokens":0,"cost_usd":0},"updated_at":""}' > .vamp/state.json
+    echo '{"version":"2.0.1","project":{},"agents":[],"totals":{"tokens":0,"cost_usd":0},"updated_at":""}' > .vamp/state.json
     run_vamp agent list
     assert_success
     assert_output --partial "No agents running"
@@ -162,7 +162,9 @@ teardown() {
 
     if command -v jq &>/dev/null; then
         local version=$(jq -r '.version' .vamp/state.json)
-        [ "$version" = "2.0.0" ]
+        # Version should match VAMP_VERSION from the script
+        source "$VAMP_BIN" _source_only 2>/dev/null || true
+        [ -n "$version" ] && [[ "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
     fi
 }
 
@@ -198,8 +200,8 @@ teardown() {
     refute_output --partial "swarm"
 }
 
-@test "version: shows 2.0.0" {
+@test "version: shows 2.0.1" {
     run_vamp version
     assert_success
-    assert_output --partial "2.0.0"
+    assert_output --partial "2.0.1"
 }

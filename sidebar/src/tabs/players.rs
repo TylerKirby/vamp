@@ -16,7 +16,7 @@ fn status_icon(status: &str) -> &'static str {
         "waiting" => "\u{1d13e}", // 𝄾
         "paused" => "\u{25cb}",   // ○
         "error" => "\u{2717}",    // ✗
-        "stopped" => "\u{25cb}",  // ○
+        "stopped" => "\u{25a0}",  // ■
         _ => "?",
     }
 }
@@ -85,6 +85,7 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
                     "waiting" => theme::YELLOW,
                     "paused" => theme::DIM,
                     "error" => theme::RED,
+                    "stopped" => theme::RED,
                     _ => theme::DIM,
                 };
 

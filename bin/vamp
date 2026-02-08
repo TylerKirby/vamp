@@ -1355,7 +1355,8 @@ init_vamp_dir() {
             --arg path "$project_dir" \
             --arg session "$session_name" \
             --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-            '{version:"2.0.0",project:{name:$name,path:$path,session:$session},agents:[],focused_agent:"main",totals:{tokens:0,cost_usd:0},updated_at:$ts}' \
+            --arg ver "$VAMP_VERSION" \
+            '{version:$ver,project:{name:$name,path:$path,session:$session},agents:[],focused_agent:"main",totals:{tokens:0,cost_usd:0},updated_at:$ts}' \
             > "$tmp" && mv "$tmp" "$project_dir/$VAMP_DIR/state.json"
     fi
 }
@@ -1863,13 +1864,35 @@ state_refresh() {
     fi
 
     local windows=$(tmux list-windows -t "$session_name" -F '#{window_name}' 2>/dev/null)
-    local agent_ids=$(jq -r '.agents[].id' "$state_file" 2>/dev/null)
+    local agent_ids=$(jq -r '.agents[] | "\(.id)|\(.status)"' "$state_file" 2>/dev/null)
 
-    while read -r agent_id; do
+    while IFS='|' read -r agent_id agent_status; do
         [ -z "$agent_id" ] && continue
+
+        # Window gone → stopped
         if ! echo "$windows" | grep -q "^${agent_id}$"; then
-            state_update_agent_status "$project_dir" "$agent_id" "stopped"
+            if [ "$agent_status" != "stopped" ]; then
+                state_update_agent_status "$project_dir" "$agent_id" "stopped"
+            fi
+            continue
         fi
+
+        # Window exists but agent process may have exited (pane fell back to shell).
+        # Check the pane's current command — if it's a shell, agent is done.
+        if [ "$agent_id" = "main" ]; then
+            local pane_cmd=$(tmux list-panes -t "$session_name:0.0" -F '#{pane_current_command}' 2>/dev/null)
+        else
+            local pane_cmd=$(tmux list-panes -t "$session_name:$agent_id" -F '#{pane_current_command}' 2>/dev/null)
+        fi
+
+        case "$pane_cmd" in
+            bash|zsh|fish|sh|dash)
+                # Shell is running, not the agent — mark stopped
+                if [ "$agent_status" = "running" ]; then
+                    state_update_agent_status "$project_dir" "$agent_id" "stopped"
+                fi
+                ;;
+        esac
     done <<< "$agent_ids"
 
     # If the focused agent's window is gone, reset focus to main
@@ -2638,7 +2661,8 @@ start_session() {
         --arg path "$PROJECT_DIR" \
         --arg session "$SESSION_NAME" \
         --arg ts "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{version:"2.0.0",project:{name:$name,path:$path,session:$session},agents:[],focused_agent:"main",totals:{tokens:0,cost_usd:0},updated_at:$ts}' \
+        --arg ver "$VAMP_VERSION" \
+        '{version:$ver,project:{name:$name,path:$path,session:$session},agents:[],focused_agent:"main",totals:{tokens:0,cost_usd:0},updated_at:$ts}' \
         > "$tmp_state" && mv "$tmp_state" "$PROJECT_DIR/$VAMP_DIR/state.json"
 
     # Detect sidebar binary
