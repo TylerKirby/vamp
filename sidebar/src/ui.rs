@@ -160,8 +160,8 @@ fn render_footer(frame: &mut Frame, area: Rect, app: &mut App) {
         }
         Tab::Beads => {
             let issues = &app.beads_state.issues;
-            let open = issues.iter().filter(|i| i.status == "open").count();
-            let blocked = issues.iter().filter(|i| i.status == "blocked").count();
+            let open = issues.iter().filter(|i| i.effective_status() == "open").count();
+            let blocked = issues.iter().filter(|i| i.is_blocked()).count();
             let status_label = app.beads_status_filter.as_deref().unwrap_or("all");
             let type_label = app.beads_type_filter.as_deref().unwrap_or("all");
             format!(" {} open  {} blocked  [t]oggle [s]:{} [l]:{} [Enter]detail", open, blocked, status_label, type_label)

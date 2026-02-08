@@ -76,9 +76,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
             if app.beads_filter_active && (i.status == "closed" || i.status == "done") {
                 return false;
             }
-            // Status filter
+            // Status filter (use effective_status to account for dependency-based blocking)
             if let Some(ref sf) = app.beads_status_filter {
-                if i.status != *sf {
+                if i.effective_status() != *sf {
                     return false;
                 }
             }
@@ -123,8 +123,9 @@ pub fn render(frame: &mut Frame, area: Rect, app: &App) {
     let header_rows = items.len();
 
     for (i, issue) in filtered.iter().enumerate() {
-        let icon = status_icon(&issue.status);
-        let color = status_color(&issue.status);
+        let effective = issue.effective_status();
+        let icon = status_icon(effective);
+        let color = status_color(effective);
 
         let is_selected = i == app.selected_index;
         let title_style = if is_selected {

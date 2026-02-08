@@ -13,7 +13,7 @@ if [[ "${1:-}" != "_watcher" ]]; then
     set -e
 fi
 
-VAMP_VERSION="2.0.0"
+VAMP_VERSION="2.0.1"
 
 # Configuration - customize via ~/.config/vamp/config or env vars
 CLAUDE_CMD="${VAMP_CLAUDE_CMD:-claude}"
@@ -2419,12 +2419,16 @@ ensure_watcher() {
         while [ $waited -lt 5 ]; do
             if [ -f "$pid_file" ] && kill -0 "$(cat "$pid_file" 2>/dev/null)" 2>/dev/null; then
                 log_debug "ensure_watcher: confirmed running (pid=$(cat "$pid_file"))"
+                # Clear the shell pane so user doesn't see the nohup command
+                tmux send-keys -t "$session_name:0.2" "clear" Enter
                 return 0
             fi
             sleep 1
             ((waited++)) || true
         done
         log_debug "ensure_watcher: WARNING: watcher may not have started"
+        # Clear even if watcher didn't confirm, to hide the nohup output
+        tmux send-keys -t "$session_name:0.2" "clear" Enter
     fi
 }
 

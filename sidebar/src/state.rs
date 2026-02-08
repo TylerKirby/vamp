@@ -169,6 +169,23 @@ pub struct BeadIssue {
     pub close_reason: String,
 }
 
+impl BeadIssue {
+    /// An issue is effectively blocked if it has open dependencies,
+    /// regardless of its status field (beads keeps status as "open").
+    pub fn is_blocked(&self) -> bool {
+        self.dependency_count > 0 && self.status != "closed" && self.status != "done"
+    }
+
+    /// The effective status, accounting for dependency-based blocking.
+    pub fn effective_status(&self) -> &str {
+        if self.is_blocked() {
+            "blocked"
+        } else {
+            &self.status
+        }
+    }
+}
+
 // Files tab data — project file tree
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct TreeState {
